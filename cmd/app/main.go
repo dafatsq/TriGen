@@ -25,9 +25,12 @@ func main() {
 	w.SetContent(editor.Build())
 	w.Resize(fyne.NewSize(1024, 768))
 
-	// 5. Load recent folder if one exists
-	recentPath := a.Preferences().String("recent_folder")
-	if recentPath != "" {
+	// 5. Load recent file or folder if one exists
+	recentMode := a.Preferences().String("recent_mode")
+	recentPath := a.Preferences().String("recent_path")
+	if recentMode == "file" && recentPath != "" {
+		editor.LoadFile(recentPath)
+	} else if recentMode == "folder" && recentPath != "" {
 		editor.LoadFolder(recentPath)
 	}
 

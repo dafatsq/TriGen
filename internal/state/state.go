@@ -19,6 +19,7 @@ type AppState struct {
 	mu              sync.Mutex
 	config          *model.ModelConfig
 	modelFolderPath string
+	configFilePath   string
 	isDirty         bool
 	listeners       []func()
 	uiErrors        map[string]string // UI input parsing errors
@@ -102,8 +103,24 @@ func (s *AppState) GetModelFolderPath() string {
 func (s *AppState) SetModelFolderPath(path string) {
 	s.mu.Lock()
 	s.modelFolderPath = path
+	s.configFilePath = ""
 	s.mu.Unlock()
 	s.ScanVersions()
+	s.notifyListeners()
+}
+
+func (s *AppState) GetConfigFilePath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.configFilePath
+}
+
+func (s *AppState) SetConfigFilePath(path string) {
+	s.mu.Lock()
+	s.configFilePath = path
+	s.modelFolderPath = ""
+	s.versions = nil
+	s.mu.Unlock()
 	s.notifyListeners()
 }
 

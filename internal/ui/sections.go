@@ -1341,7 +1341,7 @@ func buildVersionsForm(win fyne.Window, s *state.AppState, onModify func()) fyne
 		return container.NewVBox(
 			widget.NewLabelWithStyle("Versions & Models Manager", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			widget.NewSeparator(),
-			widget.NewLabel("Please open a Model Folder using the 'Open Folder' button first to manage versions."),
+			widget.NewLabel("You are currently in File Editor Mode. Managing versions and model binaries requires opening a Model Folder (use 'Open Folder' in the toolbar)."),
 		)
 	}
 
@@ -1490,7 +1490,7 @@ func buildExportRepositoryForm(win fyne.Window, s *state.AppState) fyne.CanvasOb
 		return container.NewVBox(
 			widget.NewLabelWithStyle("Export Model Repository", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			widget.NewSeparator(),
-			widget.NewLabel("Please open a Model Folder using the 'Open Folder' button first to export."),
+			widget.NewLabel("You are currently in File Editor Mode. Model Repository exporting is only available when a Model Folder is opened (use 'Open Folder' in the toolbar)."),
 		)
 	}
 
