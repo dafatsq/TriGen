@@ -82,20 +82,87 @@ func formatInt32Slice(slice []int32) string {
 	return strings.Join(parts, ", ")
 }
 
+// Validation helpers
+func validateName(val string) error {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return fmt.Errorf("cannot be empty")
+	}
+	for _, r := range val {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return fmt.Errorf("contains invalid characters. Only a-z, A-Z, 0-9, _, - are allowed")
+		}
+	}
+	return nil
+}
+
+func validateDimsString(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("dimensions cannot be empty")
+	}
+	text = strings.ReplaceAll(text, "[", "")
+	text = strings.ReplaceAll(text, "]", "")
+	text = strings.ReplaceAll(text, ",", " ")
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return fmt.Errorf("dimensions cannot be empty")
+	}
+	for _, f := range fields {
+		val, err := strconv.ParseInt(f, 10, 64)
+		if err != nil {
+			return fmt.Errorf("contains invalid identifier %q", f)
+		}
+		if val == 0 || val < -1 {
+			return fmt.Errorf("dimensions must be positive or -1 (got %d)", val)
+		}
+	}
+	return nil
+}
+
+func validateGpusString(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	s = strings.ReplaceAll(s, "[", "")
+	s = strings.ReplaceAll(s, "]", "")
+	s = strings.ReplaceAll(s, ",", " ")
+	fields := strings.Fields(s)
+	for _, f := range fields {
+		val, err := strconv.ParseInt(f, 10, 32)
+		if err != nil {
+			return fmt.Errorf("contains invalid integer %q", f)
+		}
+		if val < 0 {
+			return fmt.Errorf("must be a non-negative integer (got %d)", val)
+		}
+	}
+	return nil
+}
+
 // General settings form
 func buildGeneralForm(s *state.AppState, onModify func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
 	nameEntry := widget.NewEntry()
 	nameEntry.SetText(cfg.Name)
+	nameEntry.SetPlaceHolder("e.g. mnist_model (alphanumeric, underscores, hyphens)")
 	nameEntry.OnChanged = func(val string) {
 		cfg.Name = val
+		err := validateName(val)
+		if err != nil {
+			s.SetUIError("general_name", "Error: Model name: "+err.Error())
+		} else {
+			s.ClearUIError("general_name")
+		}
 		s.SetDirty(true)
 		onModify()
 	}
 
 	platformEntry := widget.NewSelectEntry(platforms)
 	platformEntry.SetText(cfg.Platform)
+	platformEntry.SetPlaceHolder("e.g. tensorrt_plan")
 	platformEntry.OnChanged = func(val string) {
 		cfg.Platform = val
 		s.SetDirty(true)
@@ -104,6 +171,7 @@ func buildGeneralForm(s *state.AppState, onModify func()) fyne.CanvasObject {
 
 	backendEntry := widget.NewSelectEntry(backends)
 	backendEntry.SetText(cfg.Backend)
+	backendEntry.SetPlaceHolder("e.g. tensorrt")
 	backendEntry.OnChanged = func(val string) {
 		cfg.Backend = val
 		s.SetDirty(true)
@@ -112,16 +180,22 @@ func buildGeneralForm(s *state.AppState, onModify func()) fyne.CanvasObject {
 
 	maxBatchEntry := widget.NewEntry()
 	maxBatchEntry.SetText(fmt.Sprintf("%d", cfg.MaxBatchSize))
+	maxBatchEntry.SetPlaceHolder("e.g. 8 (use 0 to disable batching)")
 	maxBatchEntry.OnChanged = func(val string) {
-		if batchSize, err := strconv.ParseInt(val, 10, 32); err == nil {
+		batchSize, err := strconv.ParseInt(val, 10, 32)
+		if err != nil || batchSize < 0 {
+			s.SetUIError("general_max_batch", "Error: Max batch size must be a valid non-negative integer (e.g. 0, 8)")
+		} else {
+			s.ClearUIError("general_max_batch")
 			cfg.MaxBatchSize = int32(batchSize)
-			s.SetDirty(true)
-			onModify()
 		}
+		s.SetDirty(true)
+		onModify()
 	}
 
 	defaultModelEntry := widget.NewEntry()
 	defaultModelEntry.SetText(cfg.DefaultModelFilename)
+	defaultModelEntry.SetPlaceHolder("e.g. model.onnx")
 	defaultModelEntry.OnChanged = func(val string) {
 		cfg.DefaultModelFilename = val
 		s.SetDirty(true)
@@ -144,7 +218,7 @@ func buildGeneralForm(s *state.AppState, onModify func()) fyne.CanvasObject {
 }
 
 // Inputs settings form
-func buildInputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
+func buildInputsForm(s *state.AppState, onModify func(), onRebuild func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
 	var selectedIndex = -1
@@ -164,15 +238,23 @@ func buildInputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 
 		nameEntry := widget.NewEntry()
 		nameEntry.SetText(in.Name)
+		nameEntry.SetPlaceHolder("e.g. input_0")
 		nameEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			in.Name = val
+			if val == "" {
+				s.SetUIError(fmt.Sprintf("input_%d_name", idx), fmt.Sprintf("Error: Input %d name cannot be empty", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("input_%d_name", idx))
+			}
 			listWidget.Refresh()
+			onModify()
 		}
 
 		typeSelect := widget.NewSelect(dataTypes, func(val string) {
 			s.SaveSnapshot()
 			in.DataType = val
+			onModify()
 		})
 		typeSelect.SetSelected(in.DataType)
 
@@ -181,39 +263,57 @@ func buildInputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 		dimsEntry.SetPlaceHolder("e.g. 3, 224, 224 or -1, 768")
 		dimsEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
-			in.Dims = parseDims(val)
+			err := validateDimsString(val)
+			if err != nil {
+				s.SetUIError(fmt.Sprintf("input_%d_dims", idx), fmt.Sprintf("Error: Input %d (%s) dimensions: %v", idx, in.Name, err))
+			} else {
+				s.ClearUIError(fmt.Sprintf("input_%d_dims", idx))
+				in.Dims = parseDims(val)
+			}
+			onModify()
 		}
 
 		reshapeEntry := widget.NewEntry()
 		if in.Reshape != nil {
 			reshapeEntry.SetText(formatInt64Slice(in.Reshape.Dims))
 		}
-		reshapeEntry.SetPlaceHolder("Leave blank if no reshape needed")
+		reshapeEntry.SetPlaceHolder("e.g. 3, 224, 224 (Leave blank if no reshape needed)")
 		reshapeEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
-			dims := parseDims(val)
-			if len(dims) > 0 {
-				in.Reshape = &model.Reshape{Dims: dims}
-			} else {
+			valTrim := strings.TrimSpace(val)
+			if valTrim == "" {
+				s.ClearUIError(fmt.Sprintf("input_%d_reshape", idx))
 				in.Reshape = nil
+			} else {
+				err := validateDimsString(val)
+				if err != nil {
+					s.SetUIError(fmt.Sprintf("input_%d_reshape", idx), fmt.Sprintf("Error: Input %d (%s) reshape dimensions: %v", idx, in.Name, err))
+				} else {
+					s.ClearUIError(fmt.Sprintf("input_%d_reshape", idx))
+					in.Reshape = &model.Reshape{Dims: parseDims(val)}
+				}
 			}
+			onModify()
 		}
 
 		optionalCheck := widget.NewCheck("Optional Input", func(checked bool) {
 			s.SaveSnapshot()
 			in.Optional = checked
+			onModify()
 		})
 		optionalCheck.Checked = in.Optional
 
 		raggedCheck := widget.NewCheck("Allow Ragged Batch", func(checked bool) {
 			s.SaveSnapshot()
 			in.AllowRaggedBatch = checked
+			onModify()
 		})
 		raggedCheck.Checked = in.AllowRaggedBatch
 
 		shapeCheck := widget.NewCheck("Is Shape Tensor", func(checked bool) {
 			s.SaveSnapshot()
 			in.IsShapeTensor = checked
+			onModify()
 		})
 		shapeCheck.Checked = in.IsShapeTensor
 
@@ -260,6 +360,7 @@ func buildInputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 	// Add/Remove buttons
 	addBtn := widget.NewButton("Add Input", func() {
 		s.SaveSnapshot()
+		s.ClearUIErrorsWithPrefix("input_")
 		cfg.Inputs = append(cfg.Inputs, model.ModelInput{
 			Name:     fmt.Sprintf("input_%d", len(cfg.Inputs)),
 			DataType: "TYPE_FP32",
@@ -267,16 +368,19 @@ func buildInputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 		})
 		listWidget.Refresh()
 		listWidget.Select(len(cfg.Inputs) - 1)
+		onModify()
 	})
 
 	removeBtn := widget.NewButton("Remove Input", func() {
 		if selectedIndex >= 0 && selectedIndex < len(cfg.Inputs) {
 			s.SaveSnapshot()
+			s.ClearUIErrorsWithPrefix("input_")
 			cfg.Inputs = append(cfg.Inputs[:selectedIndex], cfg.Inputs[selectedIndex+1:]...)
 			selectedIndex = -1
 			listWidget.Refresh()
 			listWidget.UnselectAll()
 			showDetails(-1)
+			onModify()
 		}
 	})
 
@@ -298,7 +402,7 @@ func buildInputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 }
 
 // Outputs settings form
-func buildOutputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
+func buildOutputsForm(s *state.AppState, onModify func(), onRebuild func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
 	var selectedIndex = -1
@@ -317,15 +421,23 @@ func buildOutputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 
 		nameEntry := widget.NewEntry()
 		nameEntry.SetText(out.Name)
+		nameEntry.SetPlaceHolder("e.g. output_0")
 		nameEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			out.Name = val
+			if val == "" {
+				s.SetUIError(fmt.Sprintf("output_%d_name", idx), fmt.Sprintf("Error: Output %d name cannot be empty", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("output_%d_name", idx))
+			}
 			listWidget.Refresh()
+			onModify()
 		}
 
 		typeSelect := widget.NewSelect(dataTypes, func(val string) {
 			s.SaveSnapshot()
 			out.DataType = val
+			onModify()
 		})
 		typeSelect.SetSelected(out.DataType)
 
@@ -334,22 +446,37 @@ func buildOutputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 		dimsEntry.SetPlaceHolder("e.g. 1000 or -1, 768")
 		dimsEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
-			out.Dims = parseDims(val)
+			err := validateDimsString(val)
+			if err != nil {
+				s.SetUIError(fmt.Sprintf("output_%d_dims", idx), fmt.Sprintf("Error: Output %d (%s) dimensions: %v", idx, out.Name, err))
+			} else {
+				s.ClearUIError(fmt.Sprintf("output_%d_dims", idx))
+				out.Dims = parseDims(val)
+			}
+			onModify()
 		}
 
 		reshapeEntry := widget.NewEntry()
 		if out.Reshape != nil {
 			reshapeEntry.SetText(formatInt64Slice(out.Reshape.Dims))
 		}
-		reshapeEntry.SetPlaceHolder("Leave blank if no reshape needed")
+		reshapeEntry.SetPlaceHolder("e.g. 1000 (Leave blank if no reshape needed)")
 		reshapeEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
-			dims := parseDims(val)
-			if len(dims) > 0 {
-				out.Reshape = &model.Reshape{Dims: dims}
-			} else {
+			valTrim := strings.TrimSpace(val)
+			if valTrim == "" {
+				s.ClearUIError(fmt.Sprintf("output_%d_reshape", idx))
 				out.Reshape = nil
+			} else {
+				err := validateDimsString(val)
+				if err != nil {
+					s.SetUIError(fmt.Sprintf("output_%d_reshape", idx), fmt.Sprintf("Error: Output %d (%s) reshape dimensions: %v", idx, out.Name, err))
+				} else {
+					s.ClearUIError(fmt.Sprintf("output_%d_reshape", idx))
+					out.Reshape = &model.Reshape{Dims: parseDims(val)}
+				}
 			}
+			onModify()
 		}
 
 		labelEntry := widget.NewEntry()
@@ -358,6 +485,7 @@ func buildOutputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 		labelEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			out.LabelFilename = val
+			onModify()
 		}
 
 		form := widget.NewForm(
@@ -399,6 +527,7 @@ func buildOutputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 
 	addBtn := widget.NewButton("Add Output", func() {
 		s.SaveSnapshot()
+		s.ClearUIErrorsWithPrefix("output_")
 		cfg.Outputs = append(cfg.Outputs, model.ModelOutput{
 			Name:     fmt.Sprintf("output_%d", len(cfg.Outputs)),
 			DataType: "TYPE_FP32",
@@ -406,16 +535,19 @@ func buildOutputsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 		})
 		listWidget.Refresh()
 		listWidget.Select(len(cfg.Outputs) - 1)
+		onModify()
 	})
 
 	removeBtn := widget.NewButton("Remove Output", func() {
 		if selectedIndex >= 0 && selectedIndex < len(cfg.Outputs) {
 			s.SaveSnapshot()
+			s.ClearUIErrorsWithPrefix("output_")
 			cfg.Outputs = append(cfg.Outputs[:selectedIndex], cfg.Outputs[selectedIndex+1:]...)
 			selectedIndex = -1
 			listWidget.Refresh()
 			listWidget.UnselectAll()
 			showDetails(-1)
+			onModify()
 		}
 	})
 
@@ -516,7 +648,7 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 }
 
 // Instance Groups settings form
-func buildInstanceGroupsForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
+func buildInstanceGroupsForm(s *state.AppState, onModify func(), onRebuild func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
 	var selectedIndex = -1
@@ -535,18 +667,25 @@ func buildInstanceGroupsForm(s *state.AppState, onRebuild func()) fyne.CanvasObj
 
 		countEntry := widget.NewEntry()
 		countEntry.SetText(fmt.Sprintf("%d", grp.Count))
+		countEntry.SetPlaceHolder("e.g. 1")
 		countEntry.OnChanged = func(val string) {
-			if count, err := strconv.Atoi(val); err == nil {
+			count, err := strconv.Atoi(val)
+			if err != nil || count <= 0 {
+				s.SetUIError(fmt.Sprintf("instance_group_%d_count", idx), fmt.Sprintf("Error: Instance Group %d count must be a positive integer (>= 1)", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("instance_group_%d_count", idx))
 				s.SaveSnapshot()
 				grp.Count = int32(count)
 				listWidget.Refresh()
 			}
+			onModify()
 		}
 
 		kindSelect := widget.NewSelect(instanceKinds, func(val string) {
 			s.SaveSnapshot()
 			grp.Kind = val
 			listWidget.Refresh()
+			onModify()
 		})
 		kindSelect.SetSelected(grp.Kind)
 
@@ -554,16 +693,24 @@ func buildInstanceGroupsForm(s *state.AppState, onRebuild func()) fyne.CanvasObj
 		gpusEntry.SetText(formatInt32Slice(grp.Gpus))
 		gpusEntry.SetPlaceHolder("e.g. 0, 1 (Leave empty for CPU or Autoselect)")
 		gpusEntry.OnChanged = func(val string) {
-			s.SaveSnapshot()
-			grp.Gpus = parseGpus(val)
+			err := validateGpusString(val)
+			if err != nil {
+				s.SetUIError(fmt.Sprintf("instance_group_%d_gpus", idx), fmt.Sprintf("Error: Instance Group %d GPU IDs: %v", idx, err))
+			} else {
+				s.ClearUIError(fmt.Sprintf("instance_group_%d_gpus", idx))
+				s.SaveSnapshot()
+				grp.Gpus = parseGpus(val)
+			}
+			onModify()
 		}
 
 		hostPolicyEntry := widget.NewEntry()
 		hostPolicyEntry.SetText(grp.HostPolicy)
-		hostPolicyEntry.SetPlaceHolder("Host policy name")
+		hostPolicyEntry.SetPlaceHolder("e.g. my_host_policy (Leave empty for default)")
 		hostPolicyEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			grp.HostPolicy = val
+			onModify()
 		}
 
 		form := widget.NewForm(
@@ -605,6 +752,7 @@ func buildInstanceGroupsForm(s *state.AppState, onRebuild func()) fyne.CanvasObj
 
 	addBtn := widget.NewButton("Add Group", func() {
 		s.SaveSnapshot()
+		s.ClearUIErrorsWithPrefix("instance_group_")
 		cfg.InstanceGroups = append(cfg.InstanceGroups, model.InstanceGroup{
 			Count: 1,
 			Kind:  "KIND_GPU",
@@ -612,16 +760,19 @@ func buildInstanceGroupsForm(s *state.AppState, onRebuild func()) fyne.CanvasObj
 		})
 		listWidget.Refresh()
 		listWidget.Select(len(cfg.InstanceGroups) - 1)
+		onModify()
 	})
 
 	removeBtn := widget.NewButton("Remove Group", func() {
 		if selectedIndex >= 0 && selectedIndex < len(cfg.InstanceGroups) {
 			s.SaveSnapshot()
+			s.ClearUIErrorsWithPrefix("instance_group_")
 			cfg.InstanceGroups = append(cfg.InstanceGroups[:selectedIndex], cfg.InstanceGroups[selectedIndex+1:]...)
 			selectedIndex = -1
 			listWidget.Refresh()
 			listWidget.UnselectAll()
 			showDetails(-1)
+			onModify()
 		}
 	})
 
@@ -818,7 +969,7 @@ func buildOptimizationForm(s *state.AppState, onModify func()) fyne.CanvasObject
 }
 
 // Parameters settings form
-func buildParametersForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
+func buildParametersForm(s *state.AppState, onModify func(), onRebuild func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
 	var selectedIndex = -1
@@ -837,17 +988,26 @@ func buildParametersForm(s *state.AppState, onRebuild func()) fyne.CanvasObject 
 
 		keyEntry := widget.NewEntry()
 		keyEntry.SetText(p.Key)
+		keyEntry.SetPlaceHolder("e.g. tokenizer_dir")
 		keyEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			p.Key = val
+			if val == "" {
+				s.SetUIError(fmt.Sprintf("parameter_%d_key", idx), fmt.Sprintf("Error: Parameter %d key cannot be empty", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("parameter_%d_key", idx))
+			}
 			listWidget.Refresh()
+			onModify()
 		}
 
 		valueEntry := widget.NewEntry()
 		valueEntry.SetText(p.Value.StringValue)
+		valueEntry.SetPlaceHolder("e.g. ./tokenizer or config.json")
 		valueEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			p.Value.StringValue = val
+			onModify()
 		}
 
 		form := widget.NewForm(
@@ -856,7 +1016,7 @@ func buildParametersForm(s *state.AppState, onRebuild func()) fyne.CanvasObject 
 		)
 
 		rightContainer.Add(container.NewVBox(
-			widget.NewLabelWithStyle("Edit Parameter details", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Edit Parameter Details", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			widget.NewSeparator(),
 			form,
 		))
@@ -886,6 +1046,7 @@ func buildParametersForm(s *state.AppState, onRebuild func()) fyne.CanvasObject 
 
 	addBtn := widget.NewButton("Add Parameter", func() {
 		s.SaveSnapshot()
+		s.ClearUIErrorsWithPrefix("parameter_")
 		cfg.Parameters = append(cfg.Parameters, model.Parameter{
 			Key: fmt.Sprintf("param_%d", len(cfg.Parameters)),
 			Value: model.ParameterValue{
@@ -894,16 +1055,19 @@ func buildParametersForm(s *state.AppState, onRebuild func()) fyne.CanvasObject 
 		})
 		listWidget.Refresh()
 		listWidget.Select(len(cfg.Parameters) - 1)
+		onModify()
 	})
 
 	removeBtn := widget.NewButton("Remove Parameter", func() {
 		if selectedIndex >= 0 && selectedIndex < len(cfg.Parameters) {
 			s.SaveSnapshot()
+			s.ClearUIErrorsWithPrefix("parameter_")
 			cfg.Parameters = append(cfg.Parameters[:selectedIndex], cfg.Parameters[selectedIndex+1:]...)
 			selectedIndex = -1
 			listWidget.Refresh()
 			listWidget.UnselectAll()
 			showDetails(-1)
+			onModify()
 		}
 	})
 
@@ -925,7 +1089,7 @@ func buildParametersForm(s *state.AppState, onRebuild func()) fyne.CanvasObject 
 }
 
 // Warmup settings form
-func buildWarmupForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
+func buildWarmupForm(s *state.AppState, onModify func(), onRebuild func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
 	var selectedIndex = -1
@@ -944,28 +1108,47 @@ func buildWarmupForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 
 		nameEntry := widget.NewEntry()
 		nameEntry.SetText(w.Name)
+		nameEntry.SetPlaceHolder("e.g. sample_0")
 		nameEntry.OnChanged = func(val string) {
 			s.SaveSnapshot()
 			w.Name = val
+			if val == "" {
+				s.SetUIError(fmt.Sprintf("warmup_%d_name", idx), fmt.Sprintf("Error: Warmup %d name cannot be empty", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("warmup_%d_name", idx))
+			}
 			listWidget.Refresh()
+			onModify()
 		}
 
 		batchEntry := widget.NewEntry()
 		batchEntry.SetText(fmt.Sprintf("%d", w.BatchSize))
+		batchEntry.SetPlaceHolder("e.g. 1 (must be positive)")
 		batchEntry.OnChanged = func(val string) {
-			if b, err := strconv.Atoi(val); err == nil {
+			b, err := strconv.Atoi(val)
+			if err != nil || b <= 0 {
+				s.SetUIError(fmt.Sprintf("warmup_%d_batch", idx), fmt.Sprintf("Error: Warmup %d batch size must be a positive integer (>= 1)", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("warmup_%d_batch", idx))
 				s.SaveSnapshot()
 				w.BatchSize = int32(b)
 			}
+			onModify()
 		}
 
 		countEntry := widget.NewEntry()
 		countEntry.SetText(fmt.Sprintf("%d", w.Count))
+		countEntry.SetPlaceHolder("e.g. 10 (must be non-negative)")
 		countEntry.OnChanged = func(val string) {
-			if c, err := strconv.Atoi(val); err == nil {
+			c, err := strconv.Atoi(val)
+			if err != nil || c < 0 {
+				s.SetUIError(fmt.Sprintf("warmup_%d_count", idx), fmt.Sprintf("Error: Warmup %d count must be a non-negative integer", idx))
+			} else {
+				s.ClearUIError(fmt.Sprintf("warmup_%d_count", idx))
 				s.SaveSnapshot()
 				w.Count = int32(c)
 			}
+			onModify()
 		}
 
 		form := widget.NewForm(
@@ -1006,6 +1189,7 @@ func buildWarmupForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 
 	addBtn := widget.NewButton("Add Warmup", func() {
 		s.SaveSnapshot()
+		s.ClearUIErrorsWithPrefix("warmup_")
 		cfg.Warmups = append(cfg.Warmups, model.ModelWarmup{
 			Name:      fmt.Sprintf("warmup_sample_%d", len(cfg.Warmups)),
 			BatchSize: 1,
@@ -1013,16 +1197,19 @@ func buildWarmupForm(s *state.AppState, onRebuild func()) fyne.CanvasObject {
 		})
 		listWidget.Refresh()
 		listWidget.Select(len(cfg.Warmups) - 1)
+		onModify()
 	})
 
 	removeBtn := widget.NewButton("Remove Warmup", func() {
 		if selectedIndex >= 0 && selectedIndex < len(cfg.Warmups) {
 			s.SaveSnapshot()
+			s.ClearUIErrorsWithPrefix("warmup_")
 			cfg.Warmups = append(cfg.Warmups[:selectedIndex], cfg.Warmups[selectedIndex+1:]...)
 			selectedIndex = -1
 			listWidget.Refresh()
 			listWidget.UnselectAll()
 			showDetails(-1)
+			onModify()
 		}
 	})
 

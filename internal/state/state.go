@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"triton-config-studio/internal/model"
@@ -15,6 +16,7 @@ type AppState struct {
 	undoStack    []string // JSON strings
 	redoStack    []string // JSON strings
 	listeners    []func()
+	uiErrors     map[string]string // UI input parsing errors
 }
 
 func NewAppState() *AppState {
@@ -25,7 +27,50 @@ func NewAppState() *AppState {
 		},
 		undoStack: []string{},
 		redoStack: []string{},
+		uiErrors:  make(map[string]string),
 	}
+}
+
+func (s *AppState) SetUIError(key, msg string) {
+	s.mu.Lock()
+	if s.uiErrors == nil {
+		s.uiErrors = make(map[string]string)
+	}
+	s.uiErrors[key] = msg
+	s.mu.Unlock()
+	s.notifyListeners()
+}
+
+func (s *AppState) ClearUIError(key string) {
+	s.mu.Lock()
+	if s.uiErrors != nil {
+		delete(s.uiErrors, key)
+	}
+	s.mu.Unlock()
+	s.notifyListeners()
+}
+
+func (s *AppState) ClearUIErrorsWithPrefix(prefix string) {
+	s.mu.Lock()
+	if s.uiErrors != nil {
+		for k := range s.uiErrors {
+			if strings.HasPrefix(k, prefix) {
+				delete(s.uiErrors, k)
+			}
+		}
+	}
+	s.mu.Unlock()
+	s.notifyListeners()
+}
+
+func (s *AppState) GetUIErrors() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var errs []string
+	for _, v := range s.uiErrors {
+		errs = append(errs, v)
+	}
+	return errs
 }
 
 func (s *AppState) GetConfig() *model.ModelConfig {

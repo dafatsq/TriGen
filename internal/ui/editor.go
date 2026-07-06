@@ -162,13 +162,13 @@ func (e *EditorUI) reloadActiveSection() {
 	case "General":
 		form = buildGeneralForm(e.state, onModify)
 	case "Inputs":
-		form = buildInputsForm(e.state, onRebuild)
+		form = buildInputsForm(e.state, onModify, onRebuild)
 	case "Outputs":
-		form = buildOutputsForm(e.state, onRebuild)
+		form = buildOutputsForm(e.state, onModify, onRebuild)
 	case "Version Policy":
 		form = buildVersionPolicyForm(e.state, onModify)
 	case "Instance Groups":
-		form = buildInstanceGroupsForm(e.state, onRebuild)
+		form = buildInstanceGroupsForm(e.state, onModify, onRebuild)
 	case "Dynamic Batching":
 		form = buildDynamicBatchingForm(e.state, onModify)
 	case "Sequence Batching":
@@ -176,9 +176,9 @@ func (e *EditorUI) reloadActiveSection() {
 	case "Optimization":
 		form = buildOptimizationForm(e.state, onModify)
 	case "Parameters":
-		form = buildParametersForm(e.state, onRebuild)
+		form = buildParametersForm(e.state, onModify, onRebuild)
 	case "Warmup":
-		form = buildWarmupForm(e.state, onRebuild)
+		form = buildWarmupForm(e.state, onModify, onRebuild)
 	case "Response Cache":
 		form = buildResponseCacheForm(e.state, onModify)
 	case "Ensemble":
@@ -196,7 +196,12 @@ func (e *EditorUI) reloadActiveSection() {
 func (e *EditorUI) validateCurrentConfig() {
 	cfg := e.state.GetConfig()
 	e.valErrors = validator.Validate(cfg)
-
+	
+	// Append UI parsing/input validation errors
+	uiErrs := e.state.GetUIErrors()
+	for _, err := range uiErrs {
+		e.valErrors = append(e.valErrors, err)
+	}
 	if len(e.valErrors) == 0 {
 		e.valButton.SetText("✓ Configuration Valid")
 		e.valButton.Importance = widget.SuccessImportance
