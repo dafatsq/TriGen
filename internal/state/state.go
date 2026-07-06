@@ -1,22 +1,30 @@
 package state
 
 import (
-	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
 	"triton-config-studio/internal/model"
 )
 
+type ModelVersion struct {
+	Version int64
+	File    string
+}
+
 type AppState struct {
-	mu           sync.Mutex
-	config       *model.ModelConfig
-	filePath     string
-	isDirty      bool
-	undoStack    []string // JSON strings
-	redoStack    []string // JSON strings
-	listeners    []func()
-	uiErrors     map[string]string // UI input parsing errors
+	mu              sync.Mutex
+	config          *model.ModelConfig
+	modelFolderPath string
+	isDirty         bool
+	listeners       []func()
+	uiErrors        map[string]string // UI input parsing errors
+	semVersion      string            // Semantic version (e.g. 1.2.5)
+	modelPath       string            // Uploaded model path
+	versions        []ModelVersion
 }
 
 func NewAppState() *AppState {
@@ -25,9 +33,8 @@ func NewAppState() *AppState {
 			Name:         "new_model",
 			MaxBatchSize: 0,
 		},
-		undoStack: []string{},
-		redoStack: []string{},
-		uiErrors:  make(map[string]string),
+		uiErrors:   make(map[string]string),
+		semVersion: "1.0.0",
 	}
 }
 
@@ -86,17 +93,66 @@ func (s *AppState) SetConfig(cfg *model.ModelConfig) {
 	s.notifyListeners()
 }
 
-func (s *AppState) GetFilePath() string {
+func (s *AppState) GetModelFolderPath() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.filePath
+	return s.modelFolderPath
 }
 
-func (s *AppState) SetFilePath(path string) {
+func (s *AppState) SetModelFolderPath(path string) {
 	s.mu.Lock()
-	s.filePath = path
+	s.modelFolderPath = path
 	s.mu.Unlock()
+	s.ScanVersions()
 	s.notifyListeners()
+}
+
+func (s *AppState) GetVersions() []ModelVersion {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.versions
+}
+
+func (s *AppState) ScanVersions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.modelFolderPath == "" {
+		s.versions = nil
+		return
+	}
+
+	entries, err := os.ReadDir(s.modelFolderPath)
+	if err != nil {
+		s.versions = nil
+		return
+	}
+
+	var detected []ModelVersion
+	for _, entry := range entries {
+		if entry.IsDir() {
+			val, err := strconv.ParseInt(entry.Name(), 10, 64)
+			if err == nil && val >= 0 {
+				// Scan this version folder for a model file
+				subPath := filepath.Join(s.modelFolderPath, entry.Name())
+				subEntries, err := os.ReadDir(subPath)
+				fileName := "No binary found"
+				if err == nil {
+					for _, se := range subEntries {
+						if !se.IsDir() {
+							fileName = se.Name()
+							break
+						}
+					}
+				}
+				detected = append(detected, ModelVersion{
+					Version: val,
+					File:    fileName,
+				})
+			}
+		}
+	}
+	s.versions = detected
 }
 
 func (s *AppState) IsDirty() bool {
@@ -124,85 +180,30 @@ func (s *AppState) notifyListeners() {
 	}
 }
 
-// SaveSnapshot saves the current state of ModelConfig to the undo stack
-func (s *AppState) SaveSnapshot() {
+func (s *AppState) GetSemVersion() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	data, err := json.Marshal(s.config)
-	if err != nil {
-		return
-	}
-
-	// Push current state to undo stack
-	s.undoStack = append(s.undoStack, string(data))
-	// Clear redo stack on new actions
-	s.redoStack = nil
-	s.isDirty = true
+	return s.semVersion
 }
 
-func (s *AppState) CanUndo() bool {
+func (s *AppState) SetSemVersion(v string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.undoStack) > 0
-}
-
-func (s *AppState) CanRedo() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.redoStack) > 0
-}
-
-func (s *AppState) Undo() {
-	s.mu.Lock()
-	if len(s.undoStack) == 0 {
-		s.mu.Unlock()
-		return
-	}
-
-	// Marshal current state to push to redo
-	currentData, err := json.Marshal(s.config)
-	if err == nil {
-		s.redoStack = append(s.redoStack, string(currentData))
-	}
-
-	// Pop from undo stack
-	lastIdx := len(s.undoStack) - 1
-	prevJSON := s.undoStack[lastIdx]
-	s.undoStack = s.undoStack[:lastIdx]
-
-	var prevCfg model.ModelConfig
-	if err := json.Unmarshal([]byte(prevJSON), &prevCfg); err == nil {
-		s.config = &prevCfg
-		s.isDirty = true
-	}
+	s.semVersion = v
 	s.mu.Unlock()
 	s.notifyListeners()
 }
 
-func (s *AppState) Redo() {
+func (s *AppState) GetModelPath() string {
 	s.mu.Lock()
-	if len(s.redoStack) == 0 {
-		s.mu.Unlock()
-		return
-	}
+	defer s.mu.Unlock()
+	return s.modelPath
+}
 
-	// Marshal current state to push to undo
-	currentData, err := json.Marshal(s.config)
-	if err == nil {
-		s.undoStack = append(s.undoStack, string(currentData))
-	}
-
-	// Pop from redo stack
-	lastIdx := len(s.redoStack) - 1
-	nextJSON := s.redoStack[lastIdx]
-	s.redoStack = s.redoStack[:lastIdx]
-
-	var nextCfg model.ModelConfig
-	if err := json.Unmarshal([]byte(nextJSON), &nextCfg); err == nil {
-		s.config = &nextCfg
-		s.isDirty = true
-	}
+func (s *AppState) SetModelPath(path string) {
+	s.mu.Lock()
+	s.modelPath = path
 	s.mu.Unlock()
 	s.notifyListeners()
 }
+
+

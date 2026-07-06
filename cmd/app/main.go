@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
-	// 1. Create Fyne Application
-	a := app.New()
+	// 1. Create Fyne Application with a unique ID for persistent preferences
+	a := app.NewWithID("com.triton.config.studio")
 
 	// 2. Set custom premium Slate & Cyan theme
 	a.Settings().SetTheme(&ui.StudioTheme{})
@@ -25,6 +25,12 @@ func main() {
 	w.SetContent(editor.Build())
 	w.Resize(fyne.NewSize(1024, 768))
 
-	// 5. Run desktop app
+	// 5. Load recent folder if one exists
+	recentPath := a.Preferences().String("recent_folder")
+	if recentPath != "" {
+		editor.LoadFolder(recentPath)
+	}
+
+	// 6. Run desktop app
 	w.ShowAndRun()
 }
