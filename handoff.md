@@ -1,4 +1,4 @@
-# Agent Handoff: Triton Config Studio
+# Agent Handoff: TriGen
 This handoff document summarizes the state of the current conversation and details the resources, workspace history, and recommended next steps for a fresh agent.
 ---
 ## 📌 References & Existing Artifacts

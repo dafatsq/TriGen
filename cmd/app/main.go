@@ -10,13 +10,13 @@ import (
 
 func main() {
 	// 1. Create Fyne Application with a unique ID for persistent preferences
-	a := app.NewWithID("com.triton.config.studio")
+	a := app.NewWithID("com.trigen")
 
 	// 2. Set custom premium Slate & Cyan theme
 	a.Settings().SetTheme(&ui.StudioTheme{})
 
 	// 3. Create window
-	w := a.NewWindow("Triton Config Studio")
+	w := a.NewWindow("TriGen")
 
 	// 4. Initialize state and UI
 	s := state.NewAppState()
