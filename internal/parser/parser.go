@@ -487,6 +487,10 @@ func Parse(content string) (*model.ModelConfig, error) {
 		return nil, errors.New("parse error: extra tokens at end of file")
 	}
 
+	if err := rejectUnsupportedFields("model_config", m, "model_config"); err != nil {
+		return nil, fmt.Errorf("unsupported field: %w", err)
+	}
+
 	// Normalize single values that should be slices if they weren't parsed as slices.
 	// Since protobuf allows writing a repeated field as a single block:
 	//   input { name: "..." }
@@ -510,6 +514,158 @@ func Parse(content string) (*model.ModelConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+type fieldSpec struct {
+	childContext string
+}
+
+var supportedFields = map[string]map[string]fieldSpec{
+	"model_config": {
+		"name": {}, "platform": {}, "backend": {}, "max_batch_size": {}, "default_model_filename": {},
+		"input": {childContext: "model_input"}, "output": {childContext: "model_output"},
+		"version_policy":      {childContext: "version_policy"},
+		"instance_group":      {childContext: "instance_group"},
+		"dynamic_batching":    {childContext: "dynamic_batching"},
+		"sequence_batching":   {childContext: "sequence_batching"},
+		"optimization":        {childContext: "optimization"},
+		"parameters":          {childContext: "parameter"},
+		"model_warmup":        {childContext: "model_warmup"},
+		"response_cache":      {childContext: "response_cache"},
+		"ensemble_scheduling": {childContext: "ensemble_scheduling"},
+	},
+	"model_input": {
+		"name": {}, "data_type": {}, "dims": {}, "reshape": {childContext: "reshape"},
+		"is_shape_tensor": {}, "allow_ragged_batch": {}, "optional": {},
+	},
+	"model_output": {
+		"name": {}, "data_type": {}, "dims": {}, "reshape": {childContext: "reshape"}, "label_filename": {},
+	},
+	"reshape": {
+		"shape": {}, "dims": {},
+	},
+	"version_policy": {
+		"latest":   {childContext: "version_policy_latest"},
+		"all":      {childContext: "version_policy_all"},
+		"specific": {childContext: "version_policy_specific"},
+	},
+	"version_policy_latest": {
+		"num_versions": {},
+	},
+	"version_policy_all": {},
+	"version_policy_specific": {
+		"versions": {},
+	},
+	"instance_group": {
+		"count": {}, "kind": {}, "gpus": {}, "host_policy": {},
+	},
+	"dynamic_batching": {
+		"preferred_batch_size": {}, "max_queue_delay_microseconds": {}, "preserve_ordering": {},
+		"priority_levels": {}, "default_queue_policy": {childContext: "queue_policy"},
+		"priority_queue_policy": {childContext: "priority_queue_policy"},
+	},
+	"queue_policy": {
+		"default_timeout_microseconds": {}, "timeout_microseconds": {}, "max_queue_size": {},
+		"timeout_action": {}, "action": {},
+	},
+	"priority_queue_policy": {
+		"key": {}, "value": {childContext: "queue_policy"},
+		"priority": {}, "queue_policy": {childContext: "queue_policy"},
+	},
+	"sequence_batching": {
+		"max_sequence_idle_microseconds": {}, "direct": {childContext: "direct_sequence_batcher"},
+		"oldest": {childContext: "oldest_sequence_batcher"}, "control_input": {childContext: "control_input"},
+		"state": {childContext: "sequence_state"},
+	},
+	"direct_sequence_batcher": {
+		"minimum_slot_allocation": {},
+	},
+	"oldest_sequence_batcher": {
+		"max_queue_delay_microseconds": {},
+	},
+	"control_input": {
+		"name": {}, "control": {childContext: "control_input_relation"},
+	},
+	"control_input_relation": {
+		"kind": {}, "int32_value": {}, "fp32_value": {},
+	},
+	"sequence_state": {
+		"name": {}, "data_type": {}, "dims": {}, "initial_state": {childContext: "initial_state"},
+	},
+	"initial_state": {
+		"name": {}, "data_type": {}, "dims": {}, "zero_data": {},
+	},
+	"optimization": {
+		"execution_accelerators": {childContext: "execution_accelerators"},
+		"input_pinned_memory":    {childContext: "pinned_memory"},
+		"output_pinned_memory":   {childContext: "pinned_memory"},
+	},
+	"pinned_memory": {
+		"enable": {},
+	},
+	"execution_accelerators": {
+		"gpu_execution_accelerator": {childContext: "execution_accelerator"},
+		"cpu_execution_accelerator": {childContext: "execution_accelerator"},
+	},
+	"execution_accelerator": {
+		"name": {}, "parameters": {childContext: "parameter"},
+	},
+	"parameter": {
+		"key": {}, "value": {childContext: "parameter_value"},
+	},
+	"parameter_value": {
+		"string_value": {},
+	},
+	"model_warmup": {
+		"name": {}, "batch_size": {}, "inputs": {childContext: "warmup_input"}, "count": {},
+	},
+	"warmup_input": {
+		"key": {}, "value": {childContext: "warmup_input_value"},
+	},
+	"warmup_input_value": {
+		"data_type": {}, "dims": {}, "zero_data": {}, "random_data": {}, "input_data_file": {},
+	},
+	"response_cache": {
+		"enable": {},
+	},
+	"ensemble_scheduling": {
+		"step": {childContext: "ensemble_step"},
+	},
+	"ensemble_step": {
+		"model_name": {}, "model_version": {}, "input_map": {childContext: "string_map"},
+		"output_map": {childContext: "string_map"},
+	},
+	"string_map": {
+		"key": {}, "value": {},
+	},
+}
+
+func rejectUnsupportedFields(context string, value interface{}, path string) error {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		fields, ok := supportedFields[context]
+		if !ok {
+			return nil
+		}
+		for key, child := range typed {
+			spec, ok := fields[key]
+			if !ok {
+				return fmt.Errorf("%s.%s is not editable by this version", path, key)
+			}
+			if spec.childContext != "" {
+				if err := rejectUnsupportedFields(spec.childContext, child, path+"."+key); err != nil {
+					return err
+				}
+			}
+		}
+	case []interface{}:
+		for i, item := range typed {
+			if err := rejectUnsupportedFields(context, item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func normalizeSlices(m map[string]interface{}) {

@@ -74,6 +74,65 @@ func parseGpus(s string) []int32 {
 	return g
 }
 
+func parsePositiveInt32List(s string) ([]int32, error) {
+	fields := normalizedListFields(s)
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	values := make([]int32, 0, len(fields))
+	for _, f := range fields {
+		val, err := strconv.ParseInt(f, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("contains invalid integer %q", f)
+		}
+		if val <= 0 {
+			return nil, fmt.Errorf("values must be positive integers (got %d)", val)
+		}
+		values = append(values, int32(val))
+	}
+	return values, nil
+}
+
+func parsePositiveInt64List(s string) ([]int64, error) {
+	fields := normalizedListFields(s)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("must include at least one value")
+	}
+	values := make([]int64, 0, len(fields))
+	for _, f := range fields {
+		val, err := strconv.ParseInt(f, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("contains invalid integer %q", f)
+		}
+		if val <= 0 {
+			return nil, fmt.Errorf("values must be positive integers (got %d)", val)
+		}
+		values = append(values, val)
+	}
+	return values, nil
+}
+
+func normalizedListFields(s string) []string {
+	s = strings.ReplaceAll(s, "[", "")
+	s = strings.ReplaceAll(s, "]", "")
+	s = strings.ReplaceAll(s, ",", " ")
+	return strings.Fields(s)
+}
+
+func newInitializedSelect(options []string, selected string, changed func(string)) *widget.Select {
+	selectWidget := widget.NewSelect(options, nil)
+	selectWidget.SetSelected(selected)
+	selectWidget.OnChanged = changed
+	return selectWidget
+}
+
+func closeAndRemoveFile(closer io.Closer, path string) {
+	_ = closer.Close()
+	if path != "" {
+		_ = os.Remove(path)
+	}
+}
+
 func formatInt64Slice(slice []int64) string {
 	var parts []string
 	for _, v := range slice {
@@ -258,11 +317,10 @@ func buildInputsForm(s *state.AppState, selectedIdx *int, onModify func(), onReb
 			onModify()
 		}
 
-		typeSelect := widget.NewSelect(dataTypes, func(val string) {
+		typeSelect := newInitializedSelect(dataTypes, in.DataType, func(val string) {
 			in.DataType = val
 			onModify()
 		})
-		typeSelect.SetSelected(in.DataType)
 
 		dimsEntry := widget.NewEntry()
 		dimsEntry.SetText(formatInt64Slice(in.Dims))
@@ -442,11 +500,10 @@ func buildOutputsForm(s *state.AppState, selectedIdx *int, onModify func(), onRe
 			onModify()
 		}
 
-		typeSelect := widget.NewSelect(dataTypes, func(val string) {
+		typeSelect := newInitializedSelect(dataTypes, out.DataType, func(val string) {
 			out.DataType = val
 			onModify()
 		})
-		typeSelect.SetSelected(out.DataType)
 
 		dimsEntry := widget.NewEntry()
 		dimsEntry.SetText(formatInt64Slice(out.Dims))
@@ -600,10 +657,14 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 			entry := widget.NewEntry()
 			entry.SetText(strconv.Itoa(int(numVersions)))
 			entry.OnChanged = func(val string) {
-				if num, err := strconv.Atoi(val); err == nil {
+				num, err := strconv.Atoi(val)
+				if err != nil || num <= 0 {
+					s.SetUIError("version_policy_latest", "Error: Version Policy latest num_versions must be a positive integer")
+				} else {
+					s.ClearUIError("version_policy_latest")
 					cfg.VersionPolicy.Latest.NumVersions = int32(num)
-					onModify()
 				}
+				onModify()
 			}
 			cardContainer.Add(widget.NewForm(widget.NewFormItem("Number of Latest Versions", entry)))
 
@@ -625,7 +686,13 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 			entry.SetText(formatInt64Slice(versions))
 			entry.SetPlaceHolder("e.g. 1, 2, 5")
 			entry.OnChanged = func(val string) {
-				cfg.VersionPolicy.Specific.Versions = parseDims(val)
+				parsed, err := parsePositiveInt64List(val)
+				if err != nil {
+					s.SetUIError("version_policy_specific", "Error: Version Policy specific versions: "+err.Error())
+				} else {
+					s.ClearUIError("version_policy_specific")
+					cfg.VersionPolicy.Specific.Versions = parsed
+				}
 				onModify()
 			}
 			cardContainer.Add(widget.NewForm(widget.NewFormItem("Version Numbers", entry)))
@@ -649,12 +716,13 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 
 	cardContainer = container.NewVBox()
 
-	selectWidget = widget.NewSelect(options, rebuildDetails)
+	selectWidget = widget.NewSelect(options, nil)
 	selectWidget.SetSelected(currentPolicy)
-
-	if currentPolicy != "None" {
-		rebuildDetails(currentPolicy)
+	selectWidget.OnChanged = func(polType string) {
+		rebuildDetails(polType)
+		onModify()
 	}
+	rebuildDetails(currentPolicy)
 
 	return container.NewVBox(
 		widget.NewLabelWithStyle("Version Policy Configuration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
@@ -697,12 +765,11 @@ func buildInstanceGroupsForm(s *state.AppState, selectedIdx *int, onModify func(
 			onModify()
 		}
 
-		kindSelect := widget.NewSelect(instanceKinds, func(val string) {
+		kindSelect := newInitializedSelect(instanceKinds, grp.Kind, func(val string) {
 			grp.Kind = val
 			listWidget.Refresh()
 			onModify()
 		})
-		kindSelect.SetSelected(grp.Kind)
 
 		gpusEntry := widget.NewEntry()
 		gpusEntry.SetText(formatInt32Slice(grp.Gpus))
@@ -835,7 +902,13 @@ func buildDynamicBatchingForm(s *state.AppState, onModify func()) fyne.CanvasObj
 		prefSizesEntry.SetText(formatInt32Slice(cfg.DynamicBatching.PreferredBatchSize))
 		prefSizesEntry.SetPlaceHolder("e.g. 2, 4, 8, 16")
 		prefSizesEntry.OnChanged = func(val string) {
-			cfg.DynamicBatching.PreferredBatchSize = parseGpus(val)
+			sizes, err := parsePositiveInt32List(val)
+			if err != nil {
+				s.SetUIError("dynamic_batching_preferred_batch_size", "Error: Dynamic Batching preferred batch sizes: "+err.Error())
+			} else {
+				s.ClearUIError("dynamic_batching_preferred_batch_size")
+				cfg.DynamicBatching.PreferredBatchSize = sizes
+			}
 			onModify()
 		}
 
@@ -843,10 +916,14 @@ func buildDynamicBatchingForm(s *state.AppState, onModify func()) fyne.CanvasObj
 		delayEntry.SetText(fmt.Sprintf("%d", cfg.DynamicBatching.MaxQueueDelayMicroseconds))
 		delayEntry.SetPlaceHolder("in microseconds, e.g. 5000")
 		delayEntry.OnChanged = func(val string) {
-			if delay, err := strconv.ParseInt(val, 10, 64); err == nil {
+			delay, err := strconv.ParseInt(val, 10, 64)
+			if err != nil || delay < 0 {
+				s.SetUIError("dynamic_batching_delay", "Error: Dynamic Batching max queue delay must be a non-negative integer")
+			} else {
+				s.ClearUIError("dynamic_batching_delay")
 				cfg.DynamicBatching.MaxQueueDelayMicroseconds = delay
-				onModify()
 			}
+			onModify()
 		}
 
 		preserveOrderCheck := widget.NewCheck("Preserve Order", nil)
@@ -859,10 +936,14 @@ func buildDynamicBatchingForm(s *state.AppState, onModify func()) fyne.CanvasObj
 		priorityLevelsEntry := widget.NewEntry()
 		priorityLevelsEntry.SetText(fmt.Sprintf("%d", cfg.DynamicBatching.PriorityLevels))
 		priorityLevelsEntry.OnChanged = func(val string) {
-			if levels, err := strconv.Atoi(val); err == nil {
+			levels, err := strconv.Atoi(val)
+			if err != nil || levels < 0 {
+				s.SetUIError("dynamic_batching_priority_levels", "Error: Dynamic Batching priority levels must be a non-negative integer")
+			} else {
+				s.ClearUIError("dynamic_batching_priority_levels")
 				cfg.DynamicBatching.PriorityLevels = int32(levels)
-				onModify()
 			}
+			onModify()
 		}
 
 		form := widget.NewForm(
@@ -926,10 +1007,14 @@ func buildSequenceBatchingForm(s *state.AppState, onModify func()) fyne.CanvasOb
 		idleEntry := widget.NewEntry()
 		idleEntry.SetText(fmt.Sprintf("%d", cfg.SequenceBatching.MaxSequenceIdleMicroseconds))
 		idleEntry.OnChanged = func(val string) {
-			if idle, err := strconv.ParseInt(val, 10, 64); err == nil {
+			idle, err := strconv.ParseInt(val, 10, 64)
+			if err != nil || idle < 0 {
+				s.SetUIError("sequence_batching_idle", "Error: Sequence Batching max sequence idle must be a non-negative integer")
+			} else {
+				s.ClearUIError("sequence_batching_idle")
 				cfg.SequenceBatching.MaxSequenceIdleMicroseconds = idle
-				onModify()
 			}
+			onModify()
 		}
 
 		form := widget.NewForm(
@@ -1512,6 +1597,11 @@ func buildExportRepositoryForm(win fyne.Window, s *state.AppState) fyne.CanvasOb
 	}
 
 	exportBtn := widget.NewButtonWithIcon("Export Model Repository (.zip)", theme.DocumentSaveIcon(), func() {
+		if issues := blockingValidationIssues(s); len(issues) > 0 {
+			showValidationIssuesDialog("Fix Validation Errors Before Exporting", issues, win)
+			return
+		}
+
 		cfg := s.GetConfig()
 		modelName := strings.TrimSpace(cfg.Name)
 		if modelName == "" {
@@ -1526,20 +1616,28 @@ func buildExportRepositoryForm(win fyne.Window, s *state.AppState) fyne.CanvasOb
 			if writer == nil {
 				return
 			}
+			zipPath := writer.URI().Path()
 			if s.IsDirty() {
 				if err := fileio.SaveConfig(filepath.Join(folderPath, "config.pbtxt"), cfg); err != nil {
-					_ = writer.Close()
+					closeAndRemoveFile(writer, zipPath)
 					dialog.ShowError(fmt.Errorf("failed to save current config before export: %w", err), win)
 					return
 				}
 				s.SetDirty(false)
 			}
 
-			err = exporter.ZipDirectoryToWriter(folderPath, writer)
+			if err := exporter.ValidateZipOutputPath(folderPath, zipPath); err != nil {
+				closeAndRemoveFile(writer, zipPath)
+				dialog.ShowError(err, win)
+				return
+			}
+
+			err = exporter.ZipDirectoryToWriterWithOutputPath(folderPath, zipPath, writer)
 			if closeErr := writer.Close(); err == nil && closeErr != nil {
 				err = closeErr
 			}
 			if err != nil {
+				_ = os.Remove(zipPath)
 				dialog.ShowError(fmt.Errorf("failed to zip model repository directory: %w", err), win)
 				return
 			}

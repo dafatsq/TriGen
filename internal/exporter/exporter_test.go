@@ -84,6 +84,25 @@ func TestZipDirectoryRejectsOutputInsideSource(t *testing.T) {
 	}
 }
 
+func TestZipDirectoryToWriterWithOutputPathRejectsOutputInsideSource(t *testing.T) {
+	modelDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelDir, "config.pbtxt"), []byte("config"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	zipPath := filepath.Join(modelDir, "repo.zip")
+	file, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("create zip writer: %v", err)
+	}
+	defer file.Close()
+
+	err = ZipDirectoryToWriterWithOutputPath(modelDir, zipPath, file)
+	if err == nil {
+		t.Fatal("writer-based export should reject output paths inside the source directory")
+	}
+}
+
 func TestExportRepository(t *testing.T) {
 	// Create a dummy model file
 	tmpDir, err := os.MkdirTemp("", "triton_export_test")

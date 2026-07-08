@@ -219,3 +219,17 @@ func TestParseComplex(t *testing.T) {
 		t.Errorf("Dynamic batching mismatch")
 	}
 }
+
+func TestParseRejectsUnsupportedFields(t *testing.T) {
+	content := `
+	name: "advanced_model"
+	backend: "python"
+	model_transaction_policy {
+		decoupled: true
+	}
+	`
+
+	if _, err := Parse(content); err == nil {
+		t.Fatal("expected unsupported Triton fields to be rejected instead of silently dropped")
+	}
+}

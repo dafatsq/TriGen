@@ -117,7 +117,7 @@ func ExportRepository(zipPath string, cfg *model.ModelConfig, modelFilePath stri
 
 // ZipDirectory recursively packages the entire directory structure into a ZIP file.
 func ZipDirectory(dirPath, zipPath string) (err error) {
-	if err := ensureZipOutsideSource(dirPath, zipPath); err != nil {
+	if err := ValidateZipOutputPath(dirPath, zipPath); err != nil {
 		return err
 	}
 
@@ -132,6 +132,17 @@ func ZipDirectory(dirPath, zipPath string) (err error) {
 	}()
 
 	return ZipDirectoryToWriter(dirPath, zipFile)
+}
+
+func ValidateZipOutputPath(dirPath, zipPath string) error {
+	return ensureZipOutsideSource(dirPath, zipPath)
+}
+
+func ZipDirectoryToWriterWithOutputPath(dirPath, zipPath string, writer io.Writer) error {
+	if err := ValidateZipOutputPath(dirPath, zipPath); err != nil {
+		return err
+	}
+	return ZipDirectoryToWriter(dirPath, writer)
 }
 
 // ZipDirectoryToWriter recursively packages dirPath into writer as a ZIP archive.

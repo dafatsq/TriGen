@@ -5,7 +5,6 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -115,20 +114,24 @@ func (e *EditorUI) Build() fyne.CanvasObject {
 	for _, t := range templates.BuiltInTemplates {
 		templateNames = append(templateNames, t.Name)
 	}
-	templateSelect := widget.NewSelect(templateNames, func(selected string) {
+	var templateSelect *widget.Select
+	templateSelect = widget.NewSelect(templateNames, func(selected string) {
 		if selected == "Load Template..." || selected == "" {
 			return
 		}
-		for _, t := range templates.BuiltInTemplates {
-			if t.Name == selected {
-				e.state.SetConfig(model.CloneConfig(t.Config))
-				e.state.SetModelFolderPath("")
-				e.state.SetDirty(true)
-				e.reloadActiveSection()
-				dialog.ShowInformation("Template Loaded", fmt.Sprintf("Loaded %s template configuration.", t.Name), e.window)
-				break
+		e.confirmDiscardIfDirty(func() {
+			for _, t := range templates.BuiltInTemplates {
+				if t.Name == selected {
+					e.state.SetConfig(model.CloneConfig(t.Config))
+					e.state.SetModelFolderPath("")
+					e.state.SetDirty(true)
+					e.reloadActiveSection()
+					dialog.ShowInformation("Template Loaded", fmt.Sprintf("Loaded %s template configuration.", t.Name), e.window)
+					templateSelect.SetSelected("Load Template...")
+					break
+				}
 			}
-		}
+		})
 	})
 	templateSelect.SetSelected("Load Template...")
 
@@ -266,14 +269,7 @@ func (e *EditorUI) reloadActiveSection() {
 }
 
 func (e *EditorUI) validateCurrentConfig() {
-	cfg := e.state.GetConfig()
-	e.valErrors = validator.Validate(cfg)
-
-	// Append UI parsing/input validation errors
-	uiErrs := e.state.GetUIErrors()
-	for _, err := range uiErrs {
-		e.valErrors = append(e.valErrors, err)
-	}
+	e.valErrors = collectValidationIssues(e.state)
 	if len(e.valErrors) == 0 {
 		e.valButton.SetText("✓ Configuration Valid")
 		e.valButton.Importance = widget.SuccessImportance
@@ -292,16 +288,7 @@ func (e *EditorUI) showValidationErrors() {
 		return
 	}
 
-	var sb strings.Builder
-	for _, err := range e.valErrors {
-		sb.WriteString("- " + err + "\n")
-	}
-
-	scrollContent := container.NewVScroll(widget.NewLabel(sb.String()))
-	scrollContent.SetMinSize(fyne.NewSize(500, 300))
-
-	d := dialog.NewCustom("Validation Errors", "Close", scrollContent, e.window)
-	d.Show()
+	showValidationIssuesDialog("Validation Errors", e.valErrors, e.window)
 }
 
 func (e *EditorUI) updateSidebarSections() {
@@ -415,6 +402,10 @@ func (e *EditorUI) onNew() {
 }
 
 func (e *EditorUI) onOpenFile() {
+	e.confirmDiscardIfDirty(e.showOpenFileDialog)
+}
+
+func (e *EditorUI) showOpenFileDialog() {
 	fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 		if err != nil {
 			dialog.ShowError(err, e.window)
@@ -447,6 +438,10 @@ func (e *EditorUI) onOpenFile() {
 }
 
 func (e *EditorUI) onOpenFolder() {
+	e.confirmDiscardIfDirty(e.showOpenFolderDialog)
+}
+
+func (e *EditorUI) showOpenFolderDialog() {
 	fd := dialog.NewFolderOpen(func(listable fyne.ListableURI, err error) {
 		if err != nil {
 			dialog.ShowError(err, e.window)
@@ -464,6 +459,18 @@ func (e *EditorUI) onOpenFolder() {
 
 	fd.Resize(fyne.NewSize(800, 550))
 	fd.Show()
+}
+
+func (e *EditorUI) confirmDiscardIfDirty(action func()) {
+	if !e.state.IsDirty() {
+		action()
+		return
+	}
+	dialog.ShowConfirm("Discard Changes?", "Unsaved changes will be lost. Continue?", func(discard bool) {
+		if discard {
+			action()
+		}
+	}, e.window)
 }
 
 func (e *EditorUI) LoadFile(path string) {
@@ -499,6 +506,12 @@ func (e *EditorUI) LoadFolder(path string) {
 }
 
 func (e *EditorUI) onSave() {
+	e.validateCurrentConfig()
+	if validator.HasBlockingErrors(e.valErrors) {
+		showValidationIssuesDialog("Fix Validation Errors Before Saving", e.valErrors, e.window)
+		return
+	}
+
 	configPath := e.state.GetConfigFilePath()
 	modelFolderPath := e.state.GetModelFolderPath()
 

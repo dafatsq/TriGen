@@ -115,3 +115,39 @@ func TestValidateInputOutputCollision(t *testing.T) {
 		t.Errorf("Expected input-output collision error, got: %v", errs)
 	}
 }
+
+func TestValidateAllowsScalarReshape(t *testing.T) {
+	cfg := &model.ModelConfig{
+		Name:    "scalar_reshape",
+		Backend: "onnxruntime",
+		Inputs: []model.ModelInput{
+			{
+				Name:     "input_0",
+				DataType: "TYPE_FP32",
+				Dims:     []int64{1},
+				Reshape:  &model.Reshape{Dims: []int64{}},
+			},
+		},
+		Outputs: []model.ModelOutput{
+			{
+				Name:     "output_0",
+				DataType: "TYPE_FP32",
+				Dims:     []int64{1},
+				Reshape:  &model.Reshape{Dims: []int64{}},
+			},
+		},
+	}
+
+	if errs := Validate(cfg); HasBlockingErrors(errs) {
+		t.Fatalf("scalar reshape should be valid, got: %v", errs)
+	}
+}
+
+func TestHasBlockingErrorsIgnoresWarnings(t *testing.T) {
+	if HasBlockingErrors([]string{"Warning: No inputs are defined."}) {
+		t.Fatal("warnings should not block save or export")
+	}
+	if !HasBlockingErrors([]string{"Error: Model name cannot be empty."}) {
+		t.Fatal("errors should block save or export")
+	}
+}

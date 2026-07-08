@@ -3,11 +3,21 @@ package validator
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"triton-config-studio/internal/model"
 )
 
 var nameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func HasBlockingErrors(errs []string) bool {
+	for _, err := range errs {
+		if strings.HasPrefix(err, "Error:") {
+			return true
+		}
+	}
+	return false
+}
 
 // Validate checks a ModelConfig and returns a list of error/warning strings.
 func Validate(cfg *model.ModelConfig) []string {
@@ -67,13 +77,9 @@ func Validate(cfg *model.ModelConfig) []string {
 		}
 
 		if in.Reshape != nil {
-			if len(in.Reshape.Dims) == 0 {
-				errs = append(errs, fmt.Sprintf("Error: %s reshape is specified but contains no dimensions.", prefix))
-			} else {
-				for idx, d := range in.Reshape.Dims {
-					if d == 0 || d < -1 {
-						errs = append(errs, fmt.Sprintf("Error: %s reshape dimension %d is invalid (%d).", prefix, idx, d))
-					}
+			for idx, d := range in.Reshape.Dims {
+				if d == 0 || d < -1 {
+					errs = append(errs, fmt.Sprintf("Error: %s reshape dimension %d is invalid (%d).", prefix, idx, d))
 				}
 			}
 		}
@@ -115,13 +121,9 @@ func Validate(cfg *model.ModelConfig) []string {
 		}
 
 		if out.Reshape != nil {
-			if len(out.Reshape.Dims) == 0 {
-				errs = append(errs, fmt.Sprintf("Error: %s reshape is specified but contains no dimensions.", prefix))
-			} else {
-				for idx, d := range out.Reshape.Dims {
-					if d == 0 || d < -1 {
-						errs = append(errs, fmt.Sprintf("Error: %s reshape dimension %d is invalid (%d).", prefix, idx, d))
-					}
+			for idx, d := range out.Reshape.Dims {
+				if d == 0 || d < -1 {
+					errs = append(errs, fmt.Sprintf("Error: %s reshape dimension %d is invalid (%d).", prefix, idx, d))
 				}
 			}
 		}
