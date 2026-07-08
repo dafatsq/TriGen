@@ -170,6 +170,7 @@ func (e *EditorUI) Build() fyne.CanvasObject {
 
 	// Trigger initial validation & preview text update
 	e.onStateChanged()
+	e.adjustWindowSize()
 
 	return mainLayout
 }
@@ -180,16 +181,27 @@ func (e *EditorUI) updateLayout() {
 	// Forms split contains: Sidebar + Form fields
 	sidebarScroll := container.NewVScroll(e.sidebarContainer)
 	sidebarScroll.SetMinSize(fyne.NewSize(200, 0))
-	e.mainSplit = container.NewHSplit(sidebarScroll, e.rightContainer)
+
+	stdTheme := fyne.CurrentApp().Settings().Theme()
+	thinSplitTheme := &splitTheme{Theme: stdTheme}
+
+	// Protect sidebar and right container from shrunken theme padding
+	safeSidebar := container.NewThemeOverride(sidebarScroll, stdTheme)
+	safeRight := container.NewThemeOverride(e.rightContainer, stdTheme)
+
+	e.mainSplit = container.NewHSplit(safeSidebar, safeRight)
 	e.mainSplit.Offset = 0.2
+	thinMainSplit := container.NewThemeOverride(e.mainSplit, thinSplitTheme)
 
 	if e.previewVisible {
-		// Outer split contains: Sidebar-Form split + Preview Panel
-		e.outerSplit = container.NewHSplit(e.mainSplit, e.previewContainer)
+		// Protect previewContainer from shrunken theme padding
+		safePreview := container.NewThemeOverride(e.previewContainer, stdTheme)
+		e.outerSplit = container.NewHSplit(thinMainSplit, safePreview)
 		e.outerSplit.Offset = 0.65
-		e.contentContainer.Add(e.outerSplit)
+		thinOuterSplit := container.NewThemeOverride(e.outerSplit, thinSplitTheme)
+		e.contentContainer.Add(thinOuterSplit)
 	} else {
-		e.contentContainer.Add(e.mainSplit)
+		e.contentContainer.Add(thinMainSplit)
 	}
 
 	e.contentContainer.Refresh()
@@ -205,6 +217,7 @@ func (e *EditorUI) togglePreview() {
 	}
 	e.previewButton.Refresh()
 	e.updateLayout()
+	e.adjustWindowSize()
 }
 
 func (e *EditorUI) updatePreviewText() {
@@ -266,6 +279,7 @@ func (e *EditorUI) reloadActiveSection() {
 	scroll := container.NewVScroll(form)
 	e.rightContainer.Add(scroll)
 	e.rightContainer.Refresh()
+	e.adjustWindowSize()
 }
 
 func (e *EditorUI) validateCurrentConfig() {
@@ -781,4 +795,55 @@ func (d *tightVBoxLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 		height += float32(visibleCount-1) * d.spacing
 	}
 	return fyne.NewSize(width, height)
+}
+
+// splitTheme overrides the theme Padding to make container.Split dividers much thinner (6px instead of 16px)
+type splitTheme struct {
+	fyne.Theme
+}
+
+func (t *splitTheme) Size(name fyne.ThemeSizeName) float32 {
+	if name == theme.SizeNamePadding {
+		return 3 // Thickness becomes 3 * 2 = 6px. Handle becomes 1.5px thick.
+	}
+	return t.Theme.Size(name)
+}
+
+func (e *EditorUI) adjustWindowSize() {
+	sidebarWidth := float32(200)
+	formWidth := float32(450)
+
+	// Check if activeSection has an internal list+details split layout
+	isSplitSection := false
+	switch e.activeSection {
+	case "Inputs", "Outputs", "Instance Groups", "Warmup", "Parameters":
+		isSplitSection = true
+	}
+
+	if isSplitSection {
+		formWidth += 200 // Add List column width
+	}
+
+	mainWidth := sidebarWidth + formWidth
+	totalWidth := mainWidth
+
+	// Check if live preview panel is open
+	if e.previewVisible {
+		totalWidth += 450 // Add Preview column width
+	}
+
+	// Set Split Offsets dynamically to keep columns at exact widths
+	if e.mainSplit != nil {
+		e.mainSplit.SetOffset(float64(sidebarWidth / mainWidth))
+	}
+	if e.outerSplit != nil {
+		e.outerSplit.SetOffset(float64(mainWidth / totalWidth))
+	}
+
+	currentHeight := e.window.Canvas().Size().Height
+	if currentHeight < 768 {
+		currentHeight = 768
+	}
+
+	e.window.Resize(fyne.NewSize(totalWidth, currentHeight))
 }
