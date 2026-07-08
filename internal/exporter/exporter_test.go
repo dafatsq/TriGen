@@ -44,6 +44,46 @@ func TestCalculateTVI(t *testing.T) {
 	}
 }
 
+func TestCalculateTVIRejectsAmbiguousVersions(t *testing.T) {
+	for _, semver := range []string{"1.100.0", "1.2.100"} {
+		if _, err := CalculateTVI(semver); err == nil {
+			t.Fatalf("CalculateTVI(%q) should reject minor/patch values above 99", semver)
+		}
+	}
+}
+
+func TestZipEntryNameUsesSlashSeparators(t *testing.T) {
+	got, err := zipEntryName("model", "10205\\model.onnx")
+	if err != nil {
+		t.Fatalf("zipEntryName returned error: %v", err)
+	}
+	if got != "model/10205/model.onnx" {
+		t.Fatalf("expected slash-separated ZIP entry, got %q", got)
+	}
+}
+
+func TestExportRepositoryRejectsUnsafeModelName(t *testing.T) {
+	tmpDir := t.TempDir()
+	zipPath := filepath.Join(tmpDir, "repo.zip")
+
+	err := ExportRepository(zipPath, &model.ModelConfig{Name: "../evil"}, "", 1)
+	if err == nil {
+		t.Fatal("ExportRepository should reject model names that escape the ZIP root")
+	}
+}
+
+func TestZipDirectoryRejectsOutputInsideSource(t *testing.T) {
+	modelDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelDir, "config.pbtxt"), []byte("config"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	err := ZipDirectory(modelDir, filepath.Join(modelDir, "repo.zip"))
+	if err == nil {
+		t.Fatal("ZipDirectory should reject output paths inside the source directory")
+	}
+}
+
 func TestExportRepository(t *testing.T) {
 	// Create a dummy model file
 	tmpDir, err := os.MkdirTemp("", "triton_export_test")
@@ -78,7 +118,7 @@ func TestExportRepository(t *testing.T) {
 	defer r.Close()
 
 	expectedFiles := map[string]string{
-		"test_model/config.pbtxt":   "name: \"test_model\"\nmax_batch_size: 16\n",
+		"test_model/config.pbtxt":     "name: \"test_model\"\nmax_batch_size: 16\n",
 		"test_model/10205/model.onnx": "dummy model data",
 	}
 
@@ -149,7 +189,7 @@ func TestZipDirectory(t *testing.T) {
 	defer r.Close()
 
 	expectedFiles := map[string]string{
-		"mnist_model/config.pbtxt":      "config content",
+		"mnist_model/config.pbtxt":     "config content",
 		"mnist_model/10205/model.onnx": "model binary content",
 	}
 

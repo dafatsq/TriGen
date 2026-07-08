@@ -513,27 +513,30 @@ func Parse(content string) (*model.ModelConfig, error) {
 }
 
 func normalizeSlices(m map[string]interface{}) {
+	normalizeFieldAliases(m)
+
 	sliceKeys := map[string]bool{
-		"input":                    true,
-		"output":                   true,
-		"instance_group":           true,
-		"model_warmup":             true,
-		"parameters":               true,
-		"preferred_batch_size":     true,
-		"priority_queue_policy":    true,
-		"control_input":            true,
-		"control":                  true,
-		"int32_value":              true,
-		"fp32_value":               true,
-		"state":                    true,
-		"initial_state":            true,
+		"input":                     true,
+		"output":                    true,
+		"instance_group":            true,
+		"model_warmup":              true,
+		"parameters":                true,
+		"preferred_batch_size":      true,
+		"priority_queue_policy":     true,
+		"control_input":             true,
+		"control":                   true,
+		"int32_value":               true,
+		"fp32_value":                true,
+		"state":                     true,
+		"initial_state":             true,
 		"gpu_execution_accelerator": true,
 		"cpu_execution_accelerator": true,
-		"gpus":                     true,
-		"versions":                 true,
-		"step":                     true,
-		"input_map":                true,
-		"output_map":               true,
+		"gpus":                      true,
+		"versions":                  true,
+		"inputs":                    true,
+		"step":                      true,
+		"input_map":                 true,
+		"output_map":                true,
 	}
 
 	for k, v := range m {
@@ -542,18 +545,69 @@ func normalizeSlices(m map[string]interface{}) {
 				if _, ok := v.([]interface{}); !ok {
 					// Convert single item to list
 					m[k] = []interface{}{v}
+					v = m[k]
 				}
 			}
 		}
+
+		if k == "priority_queue_policy" {
+			normalizePriorityQueuePolicy(v)
+		}
+
 		// Recursively normalize maps and slices of maps
-		if subMap, ok := v.(map[string]interface{}); ok {
+		if subMap, ok := m[k].(map[string]interface{}); ok {
 			normalizeSlices(subMap)
-		} else if slice, ok := v.([]interface{}); ok {
+		} else if slice, ok := m[k].([]interface{}); ok {
 			for _, item := range slice {
 				if itemMap, ok := item.(map[string]interface{}); ok {
 					normalizeSlices(itemMap)
 				}
 			}
+		}
+	}
+}
+
+func normalizeFieldAliases(m map[string]interface{}) {
+	if legacyDims, ok := m["dims"]; ok {
+		if _, hasShape := m["shape"]; !hasShape {
+			m["shape"] = legacyDims
+		}
+	}
+	if legacyTimeout, ok := m["timeout_microseconds"]; ok {
+		if _, hasDefaultTimeout := m["default_timeout_microseconds"]; !hasDefaultTimeout {
+			m["default_timeout_microseconds"] = legacyTimeout
+		}
+	}
+	if legacyAction, ok := m["action"]; ok {
+		if _, hasTimeoutAction := m["timeout_action"]; !hasTimeoutAction {
+			m["timeout_action"] = legacyAction
+		}
+	}
+
+	for _, key := range []string{"input_pinned_memory", "output_pinned_memory"} {
+		if nested, ok := m[key].(map[string]interface{}); ok {
+			if enabled, ok := nested["enable"]; ok {
+				m[key] = enabled
+			}
+		}
+	}
+}
+
+func normalizePriorityQueuePolicy(v interface{}) {
+	entries, ok := v.([]interface{})
+	if !ok {
+		return
+	}
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if key, ok := entryMap["key"]; ok {
+			entryMap["priority"] = key
+		}
+		if value, ok := entryMap["value"]; ok {
+			entryMap["queue_policy"] = value
 		}
 	}
 }

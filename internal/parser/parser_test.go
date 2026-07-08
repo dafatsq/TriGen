@@ -82,6 +82,88 @@ func TestParseSimple(t *testing.T) {
 	}
 }
 
+func TestParseTritonSchemaFieldNames(t *testing.T) {
+	content := `
+	name: "schema_model"
+	backend: "onnxruntime"
+	max_batch_size: 8
+	input {
+		name: "input_ids"
+		data_type: TYPE_INT32
+		dims: [ 1 ]
+		reshape { shape: [ ] }
+	}
+	output {
+		name: "logits"
+		data_type: TYPE_FP32
+		dims: [ -1, 768 ]
+		reshape { shape: [ 768 ] }
+	}
+	dynamic_batching {
+		default_queue_policy {
+			timeout_action: DELAY
+			default_timeout_microseconds: 5000
+			max_queue_size: 16
+		}
+		priority_queue_policy {
+			key: 2
+			value {
+				timeout_action: REJECT
+				default_timeout_microseconds: 1000
+				max_queue_size: 8
+			}
+		}
+	}
+	optimization {
+		input_pinned_memory { enable: true }
+		output_pinned_memory { enable: true }
+	}
+	model_warmup {
+		name: "sample"
+		batch_size: 1
+		inputs {
+			key: "input_ids"
+			value {
+				data_type: TYPE_INT32
+				dims: [ 1 ]
+				zero_data: true
+			}
+		}
+	}
+	`
+
+	cfg, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if cfg.Inputs[0].Reshape == nil || len(cfg.Inputs[0].Reshape.Dims) != 0 {
+		t.Fatalf("expected scalar input reshape shape [], got %#v", cfg.Inputs[0].Reshape)
+	}
+	if cfg.Outputs[0].Reshape == nil || len(cfg.Outputs[0].Reshape.Dims) != 1 || cfg.Outputs[0].Reshape.Dims[0] != 768 {
+		t.Fatalf("expected output reshape shape [768], got %#v", cfg.Outputs[0].Reshape)
+	}
+	if cfg.DynamicBatching == nil || cfg.DynamicBatching.DefaultQueuePolicy == nil {
+		t.Fatal("expected default queue policy")
+	}
+	if cfg.DynamicBatching.DefaultQueuePolicy.Action != "DELAY" || cfg.DynamicBatching.DefaultQueuePolicy.TimeoutMicroseconds != 5000 || cfg.DynamicBatching.DefaultQueuePolicy.MaxQueueSize != 16 {
+		t.Fatalf("default queue policy mismatch: %#v", cfg.DynamicBatching.DefaultQueuePolicy)
+	}
+	if len(cfg.DynamicBatching.PriorityQueuePolicy) != 1 {
+		t.Fatalf("expected one priority queue policy, got %#v", cfg.DynamicBatching.PriorityQueuePolicy)
+	}
+	priorityPolicy := cfg.DynamicBatching.PriorityQueuePolicy[0]
+	if priorityPolicy.Priority != 2 || priorityPolicy.QueuePolicy == nil || priorityPolicy.QueuePolicy.Action != "REJECT" || priorityPolicy.QueuePolicy.TimeoutMicroseconds != 1000 || priorityPolicy.QueuePolicy.MaxQueueSize != 8 {
+		t.Fatalf("priority queue policy mismatch: %#v", priorityPolicy)
+	}
+	if cfg.Optimization == nil || !cfg.Optimization.InputPinnedMemory || !cfg.Optimization.OutputPinnedMemory {
+		t.Fatalf("expected pinned memory settings to parse, got %#v", cfg.Optimization)
+	}
+	if len(cfg.Warmups) != 1 || len(cfg.Warmups[0].Inputs) != 1 || cfg.Warmups[0].Inputs[0].Key != "input_ids" {
+		t.Fatalf("warmup inputs did not parse: %#v", cfg.Warmups)
+	}
+}
+
 func TestParseComplex(t *testing.T) {
 	content := `
 	name: "preprocessing"

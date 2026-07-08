@@ -17,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"triton-config-studio/internal/exporter"
+	"triton-config-studio/internal/fileio"
 	"triton-config-studio/internal/model"
 	"triton-config-studio/internal/state"
 )
@@ -580,7 +581,7 @@ func buildOutputsForm(s *state.AppState, selectedIdx *int, onModify func(), onRe
 func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObject {
 	cfg := s.GetConfig()
 
-	options := []string{"Latest", "All", "Specific"}
+	options := []string{"None", "Latest", "All", "Specific"}
 	var selectWidget *widget.Select
 	var cardContainer *fyne.Container
 
@@ -589,11 +590,15 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 
 		switch polType {
 		case "Latest":
+			numVersions := int32(1)
+			if cfg.VersionPolicy != nil && cfg.VersionPolicy.Latest != nil && cfg.VersionPolicy.Latest.NumVersions > 0 {
+				numVersions = cfg.VersionPolicy.Latest.NumVersions
+			}
 			cfg.VersionPolicy = &model.VersionPolicy{
-				Latest: &model.VersionPolicyLatest{NumVersions: 1},
+				Latest: &model.VersionPolicyLatest{NumVersions: numVersions},
 			}
 			entry := widget.NewEntry()
-			entry.SetText("1")
+			entry.SetText(strconv.Itoa(int(numVersions)))
 			entry.OnChanged = func(val string) {
 				if num, err := strconv.Atoi(val); err == nil {
 					cfg.VersionPolicy.Latest.NumVersions = int32(num)
@@ -609,11 +614,15 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 			cardContainer.Add(widget.NewLabel("All available versions of the model will be loaded by Triton."))
 
 		case "Specific":
+			versions := []int64{1}
+			if cfg.VersionPolicy != nil && cfg.VersionPolicy.Specific != nil && len(cfg.VersionPolicy.Specific.Versions) > 0 {
+				versions = append([]int64(nil), cfg.VersionPolicy.Specific.Versions...)
+			}
 			cfg.VersionPolicy = &model.VersionPolicy{
-				Specific: &model.VersionPolicySpecific{Versions: []int64{1}},
+				Specific: &model.VersionPolicySpecific{Versions: versions},
 			}
 			entry := widget.NewEntry()
-			entry.SetText("1")
+			entry.SetText(formatInt64Slice(versions))
 			entry.SetPlaceHolder("e.g. 1, 2, 5")
 			entry.OnChanged = func(val string) {
 				cfg.VersionPolicy.Specific.Versions = parseDims(val)
@@ -639,7 +648,7 @@ func buildVersionPolicyForm(s *state.AppState, onModify func()) fyne.CanvasObjec
 	}
 
 	cardContainer = container.NewVBox()
-	
+
 	selectWidget = widget.NewSelect(options, rebuildDetails)
 	selectWidget.SetSelected(currentPolicy)
 
@@ -1430,7 +1439,7 @@ func buildVersionsForm(win fyne.Window, s *state.AppState, onModify func()) fyne
 
 		// Copy file to target path
 		destPath := filepath.Join(versionDir, filepath.Base(selectedModelPath))
-		
+
 		// Run copy operation
 		in, err := os.Open(selectedModelPath)
 		if err != nil {
@@ -1439,28 +1448,36 @@ func buildVersionsForm(win fyne.Window, s *state.AppState, onModify func()) fyne
 		}
 		defer in.Close()
 
-		out, err := os.Create(destPath)
+		out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("failed to create destination file: %w", err), win)
 			return
 		}
-		defer out.Close()
 
 		_, err = io.Copy(out, in)
 		if err != nil {
+			_ = out.Close()
 			dialog.ShowError(fmt.Errorf("failed to copy file: %w", err), win)
 			return
 		}
-		out.Sync()
+		if err := out.Sync(); err != nil {
+			_ = out.Close()
+			dialog.ShowError(fmt.Errorf("failed to flush destination file: %w", err), win)
+			return
+		}
+		if err := out.Close(); err != nil {
+			dialog.ShowError(fmt.Errorf("failed to close destination file: %w", err), win)
+			return
+		}
 
 		dialog.ShowInformation("Version Added", fmt.Sprintf("Successfully copied %s to version folder %d.", filepath.Base(selectedModelPath), tvi), win)
-		
+
 		// Reset form and refresh list
 		semVerEntry.SetText("")
 		selectedModelPath = ""
 		modelPathLabel.SetText("No file selected")
 		tviLabel.SetText("0")
-		
+
 		refreshVersionsList()
 		onModify()
 	})
@@ -1509,10 +1526,19 @@ func buildExportRepositoryForm(win fyne.Window, s *state.AppState) fyne.CanvasOb
 			if writer == nil {
 				return
 			}
-			defer writer.Close()
+			if s.IsDirty() {
+				if err := fileio.SaveConfig(filepath.Join(folderPath, "config.pbtxt"), cfg); err != nil {
+					_ = writer.Close()
+					dialog.ShowError(fmt.Errorf("failed to save current config before export: %w", err), win)
+					return
+				}
+				s.SetDirty(false)
+			}
 
-			zipPath := writer.URI().Path()
-			err = exporter.ZipDirectory(folderPath, zipPath)
+			err = exporter.ZipDirectoryToWriter(folderPath, writer)
+			if closeErr := writer.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
 			if err != nil {
 				dialog.ShowError(fmt.Errorf("failed to zip model repository directory: %w", err), win)
 				return

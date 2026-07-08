@@ -1,1 +1,7 @@
 .worktrees/
+/bin/
+/dist/
+/app
+/triton-config-studio
+*.exe
+*.app/

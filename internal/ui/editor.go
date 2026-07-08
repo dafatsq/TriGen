@@ -3,16 +3,17 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/widget"
 
 	"triton-config-studio/internal/fileio"
@@ -54,8 +55,8 @@ type EditorUI struct {
 
 func NewEditorUI(win fyne.Window, s *state.AppState) *EditorUI {
 	ui := &EditorUI{
-		window: win,
-		state:  s,
+		window:                    win,
+		state:                     s,
 		activeSection:             "General",
 		rightContainer:            container.NewMax(),
 		previewVisible:            true, // Default live preview panel to visible
@@ -120,7 +121,7 @@ func (e *EditorUI) Build() fyne.CanvasObject {
 		}
 		for _, t := range templates.BuiltInTemplates {
 			if t.Name == selected {
-				e.state.SetConfig(t.Config)
+				e.state.SetConfig(model.CloneConfig(t.Config))
 				e.state.SetModelFolderPath("")
 				e.state.SetDirty(true)
 				e.reloadActiveSection()
@@ -267,7 +268,7 @@ func (e *EditorUI) reloadActiveSection() {
 func (e *EditorUI) validateCurrentConfig() {
 	cfg := e.state.GetConfig()
 	e.valErrors = validator.Validate(cfg)
-	
+
 	// Append UI parsing/input validation errors
 	uiErrs := e.state.GetUIErrors()
 	for _, err := range uiErrs {
@@ -422,10 +423,20 @@ func (e *EditorUI) onOpenFile() {
 		if reader == nil {
 			return
 		}
-		defer reader.Close()
-
 		path := reader.URI().Path()
-		e.LoadFile(path)
+		cfg, err := fileio.LoadConfigFromReader(reader)
+		if closeErr := reader.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("error loading pbtxt file: %w", err), e.window)
+			return
+		}
+
+		e.state.SetConfig(cfg)
+		e.state.SetConfigFilePath(path)
+		e.state.SetDirty(false)
+		e.reloadActiveSection()
 		fyne.CurrentApp().Preferences().SetString("recent_mode", "file")
 		fyne.CurrentApp().Preferences().SetString("recent_path", path)
 	}, e.window)
@@ -473,12 +484,15 @@ func (e *EditorUI) LoadFolder(path string) {
 	if err == nil {
 		e.state.SetConfig(cfg)
 		e.state.SetDirty(false)
-	} else {
-		// Initialize blank config named after the folder
+	} else if os.IsNotExist(err) {
+		// Initialize blank config named after the folder when no config exists yet.
 		e.state.SetConfig(&model.ModelConfig{
 			Name: filepath.Base(path),
 		})
 		e.state.SetDirty(true)
+	} else {
+		dialog.ShowError(fmt.Errorf("error loading config.pbtxt: %w", err), e.window)
+		return
 	}
 	e.state.SetModelFolderPath(path)
 	e.reloadActiveSection()
@@ -520,10 +534,11 @@ func (e *EditorUI) onSave() {
 		if writer == nil {
 			return
 		}
-		defer writer.Close()
-
 		path := writer.URI().Path()
-		err = fileio.SaveConfig(path, e.state.GetConfig())
+		err = fileio.SaveConfigToWriter(writer, e.state.GetConfig())
+		if closeErr := writer.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
 		if err != nil {
 			dialog.ShowError(err, e.window)
 			return
@@ -541,8 +556,6 @@ func (e *EditorUI) onSave() {
 	fd.Resize(fyne.NewSize(800, 550))
 	fd.Show()
 }
-
-
 
 type previewTheme struct {
 	fyne.Theme
@@ -659,7 +672,7 @@ type sidebarItemWidget struct {
 }
 
 func newSidebarItemWidget(text string, selected bool, onTap func()) *sidebarItemWidget {
-	label := canvas.NewText("  " + text, theme.ForegroundColor())
+	label := canvas.NewText("  "+text, theme.ForegroundColor())
 	label.TextSize = theme.TextSize()
 	w := &sidebarItemWidget{
 		text:     text,

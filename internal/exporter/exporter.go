@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,8 +14,8 @@ import (
 	"triton-config-studio/internal/model"
 )
 
-// CalculateTVI calculates the Triton Version Integer based on semantic version major.minor.patch
-// Formula: 10000 * major + 100 * minor + patch
+// CalculateTVI calculates the Triton Version Integer based on semantic version major.minor.patch.
+// Formula: 10000 * major + 100 * minor + patch. Minor and patch must be <= 99 to avoid collisions.
 func CalculateTVI(semVer string) (int64, error) {
 	semVer = strings.TrimSpace(semVer)
 	parts := strings.Split(semVer, ".")
@@ -36,28 +37,42 @@ func CalculateTVI(semVer string) (int64, error) {
 	if major < 0 || minor < 0 || patch < 0 {
 		return 0, fmt.Errorf("version numbers cannot be negative")
 	}
+	if minor > 99 || patch > 99 {
+		return 0, fmt.Errorf("minor and patch version numbers must be between 0 and 99 to avoid TVI collisions")
+	}
 	return 10000*major + 100*minor + patch, nil
 }
 
 // ExportRepository ZIPs the configuration and model file into a Triton model repository structure.
-func ExportRepository(zipPath string, cfg *model.ModelConfig, modelFilePath string, tvi int64) error {
+func ExportRepository(zipPath string, cfg *model.ModelConfig, modelFilePath string, tvi int64) (err error) {
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to create zip file: %w", err)
 	}
-	defer zipFile.Close()
+	defer func() {
+		if closeErr := zipFile.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("failed to close zip file: %w", closeErr)
+		}
+	}()
 
 	archive := zip.NewWriter(zipFile)
-	defer archive.Close()
+	defer func() {
+		if closeErr := archive.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("failed to finalize zip archive: %w", closeErr)
+		}
+	}()
 
-	modelName := strings.TrimSpace(cfg.Name)
-	if modelName == "" {
-		modelName = "model"
+	modelName, err := safeZipSegment(cfg.Name, "model")
+	if err != nil {
+		return err
 	}
 
 	// 1. Generate config.pbtxt
 	configText := generator.Generate(cfg)
-	configPathInZip := filepath.Join(modelName, "config.pbtxt")
+	configPathInZip, err := zipEntryName(modelName, "config.pbtxt")
+	if err != nil {
+		return err
+	}
 	w1, err := archive.Create(configPathInZip)
 	if err != nil {
 		return fmt.Errorf("failed to create config.pbtxt in zip: %w", err)
@@ -72,16 +87,28 @@ func ExportRepository(zipPath string, cfg *model.ModelConfig, modelFilePath stri
 		if err != nil {
 			return fmt.Errorf("failed to open model file: %w", err)
 		}
-		defer modelFile.Close()
 
-		modelBaseName := filepath.Base(modelFilePath)
-		modelPathInZip := filepath.Join(modelName, strconv.FormatInt(tvi, 10), modelBaseName)
+		modelBaseName, err := safeZipSegment(filepath.Base(modelFilePath), "model.bin")
+		if err != nil {
+			_ = modelFile.Close()
+			return err
+		}
+		modelPathInZip, err := zipEntryName(modelName, path.Join(strconv.FormatInt(tvi, 10), modelBaseName))
+		if err != nil {
+			_ = modelFile.Close()
+			return err
+		}
 		w2, err := archive.Create(modelPathInZip)
 		if err != nil {
+			_ = modelFile.Close()
 			return fmt.Errorf("failed to create model entry in zip: %w", err)
 		}
 		if _, err := io.Copy(w2, modelFile); err != nil {
+			_ = modelFile.Close()
 			return fmt.Errorf("failed to write model file to zip: %w", err)
+		}
+		if err := modelFile.Close(); err != nil {
+			return fmt.Errorf("failed to close model file: %w", err)
 		}
 	}
 
@@ -89,47 +116,112 @@ func ExportRepository(zipPath string, cfg *model.ModelConfig, modelFilePath stri
 }
 
 // ZipDirectory recursively packages the entire directory structure into a ZIP file.
-func ZipDirectory(dirPath, zipPath string) error {
+func ZipDirectory(dirPath, zipPath string) (err error) {
+	if err := ensureZipOutsideSource(dirPath, zipPath); err != nil {
+		return err
+	}
+
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to create zip file: %w", err)
 	}
-	defer zipFile.Close()
-
-	archive := zip.NewWriter(zipFile)
-	defer archive.Close()
-
-	baseDir := filepath.Base(dirPath)
-
-	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	defer func() {
+		if closeErr := zipFile.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("failed to close zip file: %w", closeErr)
 		}
+	}()
 
+	return ZipDirectoryToWriter(dirPath, zipFile)
+}
+
+// ZipDirectoryToWriter recursively packages dirPath into writer as a ZIP archive.
+func ZipDirectoryToWriter(dirPath string, writer io.Writer) (err error) {
+	archive := zip.NewWriter(writer)
+	defer func() {
+		if closeErr := archive.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("failed to finalize zip archive: %w", closeErr)
+		}
+	}()
+
+	baseDir, err := safeZipSegment(filepath.Base(dirPath), "repository")
+	if err != nil {
+		return err
+	}
+
+	return filepath.Walk(dirPath, func(pathOnDisk string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
 		if info.IsDir() {
 			return nil
 		}
 
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		relPath, err := filepath.Rel(dirPath, path)
+		file, err := os.Open(pathOnDisk)
 		if err != nil {
 			return err
 		}
 
-		zipEntryPath := filepath.Join(baseDir, relPath)
+		relPath, err := filepath.Rel(dirPath, pathOnDisk)
+		if err != nil {
+			_ = file.Close()
+			return err
+		}
+		zipEntryPath, err := zipEntryName(baseDir, relPath)
+		if err != nil {
+			_ = file.Close()
+			return err
+		}
+
 		w, err := archive.Create(zipEntryPath)
 		if err != nil {
+			_ = file.Close()
 			return err
 		}
 
-		_, err = io.Copy(w, file)
-		return err
+		if _, err := io.Copy(w, file); err != nil {
+			_ = file.Close()
+			return err
+		}
+		return file.Close()
 	})
+}
 
-	return err
+func ensureZipOutsideSource(dirPath, zipPath string) error {
+	absDir, err := filepath.Abs(dirPath)
+	if err != nil {
+		return err
+	}
+	absZip, err := filepath.Abs(zipPath)
+	if err != nil {
+		return err
+	}
+
+	rel, err := filepath.Rel(absDir, absZip)
+	if err != nil {
+		return err
+	}
+	if rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..") {
+		return fmt.Errorf("zip output path must be outside the source directory")
+	}
+	return nil
+}
+
+func safeZipSegment(value, fallback string) (string, error) {
+	segment := strings.TrimSpace(value)
+	if segment == "" {
+		segment = fallback
+	}
+	if segment == "." || segment == ".." || strings.Contains(segment, "/") || strings.Contains(segment, "\\") {
+		return "", fmt.Errorf("unsafe ZIP path segment %q", value)
+	}
+	return segment, nil
+}
+
+func zipEntryName(baseDir, relPath string) (string, error) {
+	relPath = strings.ReplaceAll(filepath.ToSlash(relPath), "\\", "/")
+	cleanRel := path.Clean(relPath)
+	if cleanRel == "." || path.IsAbs(cleanRel) || cleanRel == ".." || strings.HasPrefix(cleanRel, "../") {
+		return "", fmt.Errorf("unsafe ZIP entry path %q", relPath)
+	}
+	return path.Join(baseDir, cleanRel), nil
 }

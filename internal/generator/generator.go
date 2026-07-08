@@ -15,6 +15,13 @@ func formatDims(dims []int64) string {
 	return strings.Join(parts, ", ")
 }
 
+func formatInt64List(dims []int64) string {
+	if len(dims) == 0 {
+		return "[ ]"
+	}
+	return fmt.Sprintf("[ %s ]", formatDims(dims))
+}
+
 func formatInt32Slice(slice []int32) string {
 	var parts []string
 	for _, v := range slice {
@@ -71,9 +78,9 @@ func Generate(cfg *model.ModelConfig) string {
 		if in.IsShapeTensor {
 			writeIndent(&sb, 1, "is_shape_tensor: true")
 		}
-		if in.Reshape != nil && len(in.Reshape.Dims) > 0 {
+		if in.Reshape != nil {
 			writeIndent(&sb, 1, "reshape {")
-			writeIndent(&sb, 2, "dims: [ %s ]", formatDims(in.Reshape.Dims))
+			writeIndent(&sb, 2, "shape: %s", formatInt64List(in.Reshape.Dims))
 			writeIndent(&sb, 1, "}")
 		}
 		writeIndent(&sb, 0, "}")
@@ -88,9 +95,9 @@ func Generate(cfg *model.ModelConfig) string {
 		if out.LabelFilename != "" {
 			writeIndent(&sb, 1, "label_filename: %q", out.LabelFilename)
 		}
-		if out.Reshape != nil && len(out.Reshape.Dims) > 0 {
+		if out.Reshape != nil {
 			writeIndent(&sb, 1, "reshape {")
-			writeIndent(&sb, 2, "dims: [ %s ]", formatDims(out.Reshape.Dims))
+			writeIndent(&sb, 2, "shape: %s", formatInt64List(out.Reshape.Dims))
 			writeIndent(&sb, 1, "}")
 		}
 		writeIndent(&sb, 0, "}")
@@ -150,13 +157,13 @@ func Generate(cfg *model.ModelConfig) string {
 			writeIndent(&sb, 1, "default_queue_policy {")
 			qp := cfg.DynamicBatching.DefaultQueuePolicy
 			if qp.TimeoutMicroseconds > 0 {
-				writeIndent(&sb, 2, "timeout_microseconds: %d", qp.TimeoutMicroseconds)
+				writeIndent(&sb, 2, "default_timeout_microseconds: %d", qp.TimeoutMicroseconds)
 			}
 			if qp.MaxQueueSize > 0 {
 				writeIndent(&sb, 2, "max_queue_size: %d", qp.MaxQueueSize)
 			}
 			if qp.Action != "" {
-				writeIndent(&sb, 2, "action: %s", qp.Action)
+				writeIndent(&sb, 2, "timeout_action: %s", qp.Action)
 			}
 			writeIndent(&sb, 1, "}")
 		}
@@ -167,13 +174,13 @@ func Generate(cfg *model.ModelConfig) string {
 			if pqp.QueuePolicy != nil {
 				qp := pqp.QueuePolicy
 				if qp.TimeoutMicroseconds > 0 {
-					writeIndent(&sb, 3, "timeout_microseconds: %d", qp.TimeoutMicroseconds)
+					writeIndent(&sb, 3, "default_timeout_microseconds: %d", qp.TimeoutMicroseconds)
 				}
 				if qp.MaxQueueSize > 0 {
 					writeIndent(&sb, 3, "max_queue_size: %d", qp.MaxQueueSize)
 				}
 				if qp.Action != "" {
-					writeIndent(&sb, 3, "action: %s", qp.Action)
+					writeIndent(&sb, 3, "timeout_action: %s", qp.Action)
 				}
 			}
 			writeIndent(&sb, 2, "}")
@@ -250,10 +257,14 @@ func Generate(cfg *model.ModelConfig) string {
 		if hasContent {
 			writeIndent(&sb, 0, "optimization {")
 			if cfg.Optimization.InputPinnedMemory {
-				writeIndent(&sb, 1, "input_pinned_memory: true")
+				writeIndent(&sb, 1, "input_pinned_memory {")
+				writeIndent(&sb, 2, "enable: true")
+				writeIndent(&sb, 1, "}")
 			}
 			if cfg.Optimization.OutputPinnedMemory {
-				writeIndent(&sb, 1, "output_pinned_memory: true")
+				writeIndent(&sb, 1, "output_pinned_memory {")
+				writeIndent(&sb, 2, "enable: true")
+				writeIndent(&sb, 1, "}")
 			}
 			if cfg.Optimization.ExecutionAccelerators != nil {
 				writeIndent(&sb, 1, "execution_accelerators {")

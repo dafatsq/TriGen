@@ -38,7 +38,7 @@ type ModelOutput struct {
 }
 
 type Reshape struct {
-	Dims []int64 `json:"dims"`
+	Dims []int64 `json:"shape"`
 }
 
 type VersionPolicy struct {
@@ -58,25 +58,25 @@ type VersionPolicySpecific struct {
 }
 
 type InstanceGroup struct {
-	Count      int32    `json:"count"`
-	Kind       string   `json:"kind"` // KIND_AUTO, KIND_CPU, KIND_GPU, KIND_MODEL
-	Gpus       []int32  `json:"gpus"`
-	HostPolicy string   `json:"host_policy"`
+	Count      int32   `json:"count"`
+	Kind       string  `json:"kind"` // KIND_AUTO, KIND_CPU, KIND_GPU, KIND_MODEL
+	Gpus       []int32 `json:"gpus"`
+	HostPolicy string  `json:"host_policy"`
 }
 
 type DynamicBatching struct {
-	PreferredBatchSize         []int32               `json:"preferred_batch_size"`
-	MaxQueueDelayMicroseconds  int64                 `json:"max_queue_delay_microseconds"`
-	PreserveOrdering           bool                  `json:"preserve_ordering"`
-	PriorityLevels             int32                 `json:"priority_levels"`
-	DefaultQueuePolicy         *QueuePolicy          `json:"default_queue_policy"`
-	PriorityQueuePolicy        []PriorityQueuePolicy `json:"priority_queue_policy"`
+	PreferredBatchSize        []int32               `json:"preferred_batch_size"`
+	MaxQueueDelayMicroseconds int64                 `json:"max_queue_delay_microseconds"`
+	PreserveOrdering          bool                  `json:"preserve_ordering"`
+	PriorityLevels            int32                 `json:"priority_levels"`
+	DefaultQueuePolicy        *QueuePolicy          `json:"default_queue_policy"`
+	PriorityQueuePolicy       []PriorityQueuePolicy `json:"priority_queue_policy"`
 }
 
 type QueuePolicy struct {
-	TimeoutMicroseconds int64  `json:"timeout_microseconds"`
+	TimeoutMicroseconds int64  `json:"default_timeout_microseconds"`
 	MaxQueueSize        int32  `json:"max_queue_size"`
-	Action              string `json:"action"` // REJECT, DELAY
+	Action              string `json:"timeout_action"` // REJECT, DELAY
 }
 
 type PriorityQueuePolicy struct {
