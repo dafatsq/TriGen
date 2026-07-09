@@ -2,6 +2,19 @@
 
 TriGen is a desktop GUI for creating, editing, validating, and exporting NVIDIA Triton Inference Server `config.pbtxt` files and model repository folders.
 
+## Pre-built Releases
+
+For a quick setup without installing Go, C compilers, or graphics libraries, you can run the pre-built packages directly:
+
+* **Windows**: Extract `fyne-cross/dist/windows-amd64/TriGen.exe.zip` and run `TriGen.exe`.
+* **Ubuntu / Linux**: Extract `fyne-cross/dist/linux-amd64/TriGen.tar.xz`, make it executable, and run:
+  ```sh
+  tar -xf TriGen.tar.xz
+  chmod +x TriGen
+  ./TriGen
+  ```
+
+
 ## Fresh Clone
 
 ```sh
