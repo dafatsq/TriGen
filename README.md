@@ -4,15 +4,15 @@ TriGen is a desktop GUI for creating, editing, validating, and exporting NVIDIA 
 
 ## Pre-built Releases
 
-For a quick setup without installing Go, C compilers, or graphics libraries, you can run the pre-built packages directly:
+For a quick setup without installing Go, C compilers, or graphics libraries, you can run the pre-built files in the `releases/` directory directly:
 
-* **Windows**: Extract `fyne-cross/dist/windows-amd64/TriGen.exe.zip` and run `TriGen.exe`.
-* **Ubuntu / Linux**: Extract `fyne-cross/dist/linux-amd64/TriGen.tar.xz`, make it executable, and run:
+* **Windows**: Run `releases/TriGen.exe` directly (or unzip `releases/TriGen.exe.zip` first if you prefer).
+* **Ubuntu / Linux**: Run the pre-compiled binary `releases/TriGen` directly:
   ```sh
-  tar -xf TriGen.tar.xz
-  chmod +x TriGen
-  ./TriGen
+  chmod +x releases/TriGen
+  ./releases/TriGen
   ```
+  *(Or extract and run the compressed `releases/TriGen.tar.xz` if you prefer).*
 
 
 ## Fresh Clone
