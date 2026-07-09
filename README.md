@@ -116,6 +116,15 @@ go build -o bin/trigen ./cmd/app
 ./bin/trigen
 ```
 
+Build local ARM64 binary (Ubuntu ARM devices like Jetson/Raspberry Pi):
+
+```sh
+PATH="$HOME/.local/go/bin:$PATH" go build -o bin/trigen ./cmd/app
+./bin/trigen
+```
+
+If your distro Go package is older than the version required by `go.mod`, install a newer Go toolchain and prepend it to `PATH` as shown above.
+
 Package Linux archive:
 
 ```sh
