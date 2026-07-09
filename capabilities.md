@@ -1,74 +1,127 @@
-# TriGen: AI Developer Context & Capabilities
+# TriGen: Comprehensive Developer Context & Architecture Manual
 
-This document provides a highly structured overview of the **TriGen** application to bring other AI models (like ChatGPT) instantly up to speed on the codebase, architecture, quirks, and exact capabilities.
-
----
-
-## 🚀 Core Stack & Specifications
-* **Language**: Go 1.24 (strictly backward-compatible with 1.24+ runtime compilers).
-* **GUI Engine**: Fyne v2 (desktop GUI, cross-compiled using Docker).
-* **Network state**: 100% offline. Statically compiled, zero external telemetry or cloud dependencies.
+This document is a complete technical and conceptual specification for **TriGen**. It is designed to give other AI systems (like ChatGPT) full context on the application's purpose, technology stack, features, workflows, and code-level design workarounds.
 
 ---
 
-## 🛠️ Complete Feature Capabilities
+## 📖 1. Core Purpose & Use Cases (Uses)
+Inference engineers deploying models to **NVIDIA Triton Inference Server** must write highly specific protobuf configuration files (`config.pbtxt`) and arrange model files (e.g., ONNX, TensorRT, PyTorch) in strict directory hierarchies based on versions. Writing these configurations by hand is error-prone and time-consuming.
 
-### 1. Triton Text Proto Parser & Generator
-* **Self-Contained Tokenizer/Parser**: (`internal/parser/parser.go`) Tokenizes and parses Triton Inference Server `config.pbtxt` files into a Go struct. It handles space-separated lists, comments (`#`), and duplicates (repeated fields like `input` or `output` are parsed into slices).
-* **Schema-Compliant Generator**: (`internal/generator/generator.go`) Outputs valid protobuf text syntax conforming strictly to Triton's parameter schemas.
-
-### 2. Dual-Mode Workspaces
-* **File Editor Mode**: Actively opens a standalone `.pbtxt` configuration file. The toolbar switches to save directly to that file path, and repository-specific sidebar panels are disabled.
-* **Folder Repository Mode**: Opens a model directory tree. Scans existing version folders, unlocks version/binary copying, and exports zipped repositories.
-* **State Persistence**: On startup (`main.go`), loads the user's last directory or file path and automatically restores the active view.
-
-### 3. Triton Version Policy & TVIs
-* **TVI Computation**: Converts semantic versions (`major.minor.patch`) to Triton Version Integers (TVIs) via the math formula:
-  $$\text{TVI} = 10000 \times \text{major} + 100 \times \text{minor} + \text{patch}$$
-* **Version Management**: Scans the directory for numeric folders, copies raw model binaries (like `model.onnx` or `model.pt`) into their computed TVI folders, and lists versions in the GUI.
-
-### 4. ZIP Exporter
-* **Recursive Packaging**: Archives the entire model folder recursively into a deployable `.zip` file.
-* **Cross-Platform Normalizer**: (`internal/exporter/exporter.go`) Sanitizes model names, protects against directory loops (saving the output inside the zipped source directory), and converts Windows backslashes (`\`) to standard zip slashes (`/`).
+**TriGen** solves this by acting as a standalone editor and a repository packager:
+* **Use Case A: Standalone Config Editor (File Mode)**: Directly opens, edits, validates, and saves any `.pbtxt` text configuration file.
+* **Use Case B: Repository Structurer (Folder Mode)**: Manages a full model folder, calculates Triton Version Integers (TVIs), copies model binaries into version subdirectories, and packages the entire layout into a deployment-ready `.zip` archive.
+* **Use Case C: Real-Time Constraint Validation**: Warns the engineer of duplicate tensor names, input/output collisions, or invalid dimensions *during editing* before deploying to production.
 
 ---
 
-## 🎨 Advanced UI Implementations & Fyne Workarounds
-
-### 1. Dynamic Window Width Adjustments
-* To prevent layout cramming, `e.adjustWindowSize()` dynamically changes the window width:
-  * **Base width**: `1024px` (Sidebar + standard Form).
-  * **Split forms**: Adds `+200px` for multi-pane layouts (`Inputs`, `Outputs`, `Instance Groups`, `Warmup`, `Parameters`).
-  * **Live Preview**: Adds `+450px` when the live text-proto preview pane is open.
-  * **Split Offsets**: Recalculated dynamically on resize so that Sidebar (`200px`), Forms (`450px`), and Preview (`450px`) stay at fixed sizes.
-
-### 2. Sleek Custom Layouts & Thinned Splitters
-* **Thinned Splitters**: Fyne HSplit splitters default to `16px` thickness. TriGen overrides the splitter's `theme.SizeNamePadding` setting to `3`, shrinking the splitter to `6px` with a `1.5px` handle.
-* **Theme Isolation**: The splitter children are wrapped back in standard `ThemeOverrides` so their margins, buttons, and input paddings remain normal.
-* **Tight Row Heights**: Sidebar button labels are made of `canvas.Text` primitives (which have zero default margins) and arranged using a custom layout engine (`tightVBoxLayout`) forcing exactly `1px` spacing between tab rows.
-
-### 3. Checkbox Dirty-State Bypass Hook
-* Fyne triggers checkbox state change callbacks upon programmatical initialization (making new tabs mark files as dirty). TriGen bypasses this by setting checkboxes to `nil` change handlers first, checking their initial values, and only then registering the `OnChanged` listener callback.
+## 🛠️ 2. Technology Stack & Rationale
+| Component | Choice | Rationale |
+| :--- | :--- | :--- |
+| **Language** | Go 1.24 | Compiled, fast startup (<2s), small memory footprint (<100MB), strong type safety, and direct filesystem access. |
+| **GUI Library** | Fyne v2 | Statically compiled, offline-first GUI toolkit. Allows building native desktop apps with a consistent dark-theme layout without relying on bulky browser shells (Electron). |
+| **Packaging Engine** | `fyne-cross` + Docker | Cross-compiles macOS host source code into Windows `.exe` and Ubuntu Linux binaries via pre-configured Docker toolchain containers. |
 
 ---
 
-## 📂 Sitemap & Main Modules
+## 🎛️ 3. Complete Feature Catalog
+* **Text Proto Parser & Generator**:
+  * Tokenizes and parses `.pbtxt` text files into intermediate JSON maps, then unmarshals them into Go structs. Duplicates (e.g., repeated `input` keys) are correctly converted to slices.
+  * Formats struct changes back into valid Triton protobuf text.
+* **Dual-Mode UI Boundaries**:
+  * **File Mode**: Restricts GUI to configuration edits. Disables versions and packaging features.
+  * **Folder Mode**: Unlocks the **Versions & Models** and **Export Repository** sidebar panels.
+* **Calculated Triton Version Integers (TVI)**:
+  * Computes TVIs from semantic versions: $\text{TVI} = 10000 \times \text{major} + 100 \times \text{minor} + \text{patch}$.
+  * Creates directory folders named after the calculated TVI and copies model files there.
+* **ZIP Exporter**:
+  * Compresses the repository and normalizes all internal paths to forward-slashes (`/`), preventing file corruption on Windows-to-Linux cross-platform Extractions.
+* **Built-in Templates**:
+  * Pre-configured profiles for PyTorch, TensorRT, ONNX, and Python LLM models.
+
+---
+
+## 🔄 4. System Layouts & Workflows (Flows)
+
+### A. Data Flow (Serialization & Editing)
+```mermaid
+graph TD
+    A[config.pbtxt file] -->|Tokenize & Parse| B(internal/parser)
+    B -->|Map representation| C(internal/model)
+    C -->|Binds to forms| D(internal/ui)
+    D -->|Real-time input checks| E(internal/validator)
+    E -->|Updates status bar| D
+    D -->|Export/Save trigger| F(internal/generator)
+    F -->|Formats text| G[config.pbtxt / ZIP Archive]
+```
+
+### B. User Layout Workflow
+```mermaid
+graph LR
+    Start([Launch App]) --> LoadPrefs[Load Last Session Path & Mode]
+    LoadPrefs --> ChooseMode{Open File or Folder?}
+    
+    ChooseMode -->|File Mode| LoadFile[Load config.pbtxt]
+    LoadFile --> ConfigForm[Edit Parameters]
+    ConfigForm --> RealTimeVal[Continuous Validation Checks]
+    RealTimeVal --> SaveFile[Save config.pbtxt]
+    
+    ChooseMode -->|Folder Mode| LoadFolder[Load Model Folder]
+    LoadFolder --> ConfigForm
+    LoadFolder --> VersionMgr[Calculate TVIs & Copy Binaries]
+    VersionMgr --> ExportZip[Zip Package entire Repository]
+```
+
+---
+
+## 🎨 5. Custom UI Engineering & Workarounds (Quirks)
+
+To build a professional, responsive interface within Fyne's default sizing bounds, the following implementations were engineered:
+
+### A. Nil-Callback Checkbox Initialization
+Fyne checkboxes execute their `OnChanged` callbacks automatically when their state is set programmatically. This caused switching tabs to mark files as unsaved (`*` dirty indicator) even if no edits occurred.
+* **Workaround**: Checkboxes are initialized with a `nil` handler, their checked values are set, and then their `OnChanged` callbacks are registered.
+
+### B. Thinned HSplit Dividers
+By default, Fyne HSplit splitters use `theme.SizeNamePadding * 2` (resulting in a thick `16px` border).
+* **Workaround**: We wrap the splitters in a custom theme (`splitTheme`) overriding the padding size to `3` (shrinking the border to a sleek `6px`).
+* **Isolation**: The inner columns (Sidebar, Form, Preview) are wrapped back in standard `ThemeOverrides` to prevent their internal input margins and paddings from shrinking.
+
+### C. Sidebar Compact Text Primitives
+Default `widget.Label` wrappers have a large built-in min-height.
+* **Workaround**: Sidebar items use raw `canvas.Text` primitives inside custom click-handlers. They are stacked using `tightVBoxLayout` which enforces a vertical spacing of exactly `1px`.
+
+### D. Dynamic Window Auto-Sizing
+To prevent layout squishing when columns are added, `e.adjustWindowSize()` dynamically resizes the window width:
+* **Sidebar**: `200px` (Fixed)
+* **Standard Form Workspace**: `450px` (Fixed)
+* **Split Lists** (Inputs, Outputs, etc.): `200px` (Fixed)
+* **Live Preview Panel**: `450px` (Fixed)
+* **Execution**: Window width resizes dynamically from `650px` (min layout) up to `1300px` (max layout with 4 active columns). The split ratios (`Offsets`) are updated programmatically on resize to keep columns from stretching.
+
+---
+
+## 📂 6. Repository Project Sitemap
 
 ```
 trigen/
 ├── cmd/
 │   └── app/
-│       └── main.go       # Launcher, ID preferences, and recent session restore
+│       └── main.go       # Main launcher, setups theme, restores session
 ├── internal/
-│   ├── model/            # Config structs and CloneConfig() deep cloner
-│   ├── parser/           # Lexer tokenizer and protobuf text parser
-│   ├── generator/        # Triton schema-compliant config generator
-│   ├── validator/        # Real-time warning constraints checkers
-│   ├── state/            # State machine (dirty indicator, error mapping)
+│   ├── model/            # Config structs and CloneConfig() deep cloner (clone.go)
+│   ├── parser/           # Scanner tokenizer and recursive descent parser
+│   ├── generator/        # Triton protobuf text formatter
+│   ├── validator/        # Real-time warnings constraints engine
+│   ├── state/            # State machine (dirty indicator, error maps)
 │   ├── fileio/           # Atomic file reads and writes
 │   ├── exporter/         # TVI math, copying binaries, and ZIP packaging
-│   ├── templates/        # Built-in PyTorch, TRT, ONNX, and Python LLM configurations
-│   └── ui/               # Editor grid shell, custom layouts, and forms
-├── releases/             # Force-tracked pre-compiled binaries for Windows & Ubuntu
-└── SDD.md                # Software Design Document
+│   ├── templates/        # Built-in PyTorch, TRT, ONNX, and Python LLM configs
+│   └── ui/               # Main layout grid, custom themes, and sections forms
+├── releases/             # Pre-compiled standalone binaries for Windows & Ubuntu
+│   ├── TriGen.exe        # Raw Windows 64-bit GUI binary
+│   ├── TriGen            # Raw Linux 64-bit Ubuntu-compatible executable
+│   ├── TriGen.exe.zip    # Compressed Windows ZIP archive
+│   └── TriGen.tar.xz     # Compressed Linux TAR archive
+├── SDD.md                # Software Design Document
+└── capabilities.md       # This specifications context file
 ```
