@@ -121,6 +121,31 @@ go vet ./...
 
 `*_test.go` files are test-only. They are not included in `go build` output, but they should stay in Git because they protect parser, validation, export, and UI regression fixes.
 
+## GitHub Build Artifacts
+
+The repo includes `.github/workflows/build.yml`. It builds downloadable artifacts without committing generated binaries:
+
+- `trigen-linux-amd64.tar.gz` for Ubuntu/Linux
+- `TriGen-windows-amd64.zip` containing `TriGen-windows-amd64.exe`
+- `trigen-macos-arm64.tar.gz` for Apple Silicon macOS
+
+Run it from GitHub:
+
+1. Open the repository on GitHub.
+2. Go to `Actions`.
+3. Select `Build desktop artifacts`.
+4. Click `Run workflow`.
+5. Download artifacts from the finished workflow run.
+
+For a release, push a version tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Tag builds also create a GitHub Release with the same files attached.
+
 ## Release Notes
 
 - Build/package on each target OS or matching CI runner. Plain `GOOS`/`GOARCH` cross-compilation is not reliable for this app because Fyne uses CGO and native graphics toolchains.
